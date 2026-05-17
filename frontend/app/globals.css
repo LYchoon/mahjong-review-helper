@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background: #1a1d23;
+  color: #e5e7eb;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans TC", sans-serif;
+}
