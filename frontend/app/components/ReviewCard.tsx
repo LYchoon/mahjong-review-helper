@@ -1,6 +1,7 @@
 "use client";
 
 import type { Alternative, DecisionReview } from "@/lib/api";
+import { helpFor } from "@/lib/factorHelp";
 import { DangerBar, EVBar } from "./DangerBar";
 import { HandSafetyView } from "./HandSafety";
 import { LabelBadge } from "./LabelBadge";
@@ -58,19 +59,25 @@ function AlternativeRow({
         </div>
         {alt.factors.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
-            {alt.factors.map((f, i) => (
-              <span
-                key={i}
-                className={`px-1.5 py-0.5 rounded text-[10px] ${
-                  f.delta < 0
-                    ? "bg-emerald-900/40 text-emerald-300"
-                    : "bg-red-900/40 text-red-300"
-                }`}
-                title={`${f.code}: ${f.delta >= 0 ? "+" : ""}${f.delta}`}
-              >
-                {f.label}
-              </span>
-            ))}
+            {alt.factors.map((f, i) => {
+              const help = helpFor(f.code);
+              const title = help
+                ? `${f.code} (${f.delta >= 0 ? "+" : ""}${f.delta})\n\n${help}`
+                : `${f.code}: ${f.delta >= 0 ? "+" : ""}${f.delta}`;
+              return (
+                <span
+                  key={i}
+                  className={`px-1.5 py-0.5 rounded text-[10px] cursor-help ${
+                    f.delta < 0
+                      ? "bg-emerald-900/40 text-emerald-300"
+                      : "bg-red-900/40 text-red-300"
+                  }`}
+                  title={title}
+                >
+                  {f.label}
+                </span>
+              );
+            })}
           </div>
         )}
       </div>
