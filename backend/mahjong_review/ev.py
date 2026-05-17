@@ -44,6 +44,28 @@ DEAL_IN_COST = {
 }
 
 
+def estimate_deal_in_cost(threat) -> float:
+    """Adjust deal-in cost by visible yakuhai melds + extra dora indicators."""
+    base = DEAL_IN_COST.get(threat.kind, 5000.0)
+    bonus = 0.0
+    # +1 han per yakuhai (dragon) triplet that's been called
+    yakuhai_tids = {31, 32, 33}  # haku/hatsu/chun — always yakuhai for any seat
+    called_yakuhai_groups = 0
+    seen = set()
+    for t in threat.called_tiles:
+        if t.tid in yakuhai_tids and t.tid not in seen:
+            # rough: 3 tiles of the same yakuhai means a triplet was called
+            count = sum(1 for x in threat.called_tiles if x.tid == t.tid)
+            if count >= 3:
+                called_yakuhai_groups += 1
+            seen.add(t.tid)
+    bonus += called_yakuhai_groups * 1500.0
+    # +1 han worth (~1500) per extra dora indicator beyond 1 (rough)
+    extra_dora_inds = max(0, len(threat.dora_indicators) - 1)
+    bonus += extra_dora_inds * 800.0
+    return base + bonus
+
+
 @dataclass
 class HandValue:
     han: int  # estimated final han (incl. dora)
@@ -112,7 +134,7 @@ def evaluate_push(
     if turns_remaining < 8:
         win_prob *= max(0.1, turns_remaining / 8.0)
 
-    cost = DEAL_IN_COST.get(threat.kind, 5000.0)
+    cost = estimate_deal_in_cost(threat)
     push_ev = win_prob * own_hand_value.points - deal_in_prob * cost
     fold_ev = 0.0
 

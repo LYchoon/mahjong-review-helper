@@ -16,21 +16,64 @@ type BoardState = {
 
 const SEAT_NAME = ["東", "南", "西", "北"];
 
+const THREAT_LABEL: Record<string, { text: string; cls: string }> = {
+  riichi: { text: "立直", cls: "bg-yellow-500 text-black" },
+  dama_tenpai: { text: "默聽嫌疑", cls: "bg-orange-500 text-white" },
+  iishanten: { text: "一向聽", cls: "bg-purple-500 text-white" },
+};
+
+const YAKUHAI_LABEL: Record<string, string> = {
+  "5z": "白",
+  "6z": "發",
+  "7z": "中",
+  "1z": "東",
+  "2z": "南",
+  "3z": "西",
+  "4z": "北",
+};
+
+function YakuhaiBadges({ melds }: { melds: string[][] }) {
+  const yakuhaiTags: string[] = [];
+  for (const meld of melds) {
+    if (meld.length < 3) continue;
+    const tile = meld[0];
+    const counts = meld.filter((t) => t === tile).length;
+    if (counts >= 3 && YAKUHAI_LABEL[tile]) {
+      yakuhaiTags.push(YAKUHAI_LABEL[tile]);
+    }
+  }
+  if (!yakuhaiTags.length) return null;
+  return (
+    <span className="ml-1 inline-flex gap-1">
+      {yakuhaiTags.map((tag, i) => (
+        <span
+          key={i}
+          className="px-1 py-0.5 rounded text-[9px] bg-amber-500 text-black font-bold"
+          title="副露役牌 (已確定有役)"
+        >
+          {tag}役
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function DiscardPile({
   tiles,
   melds,
   riichiTurn,
+  threatKind,
   label,
   isHero,
-  isThreat,
 }: {
   tiles: string[];
   melds: string[][];
   riichiTurn: number | null;
+  threatKind: string | null;
   label: string;
   isHero: boolean;
-  isThreat: boolean;
 }) {
+  const isThreat = !!threatKind;
   return (
     <div
       className={`p-2 rounded ${
@@ -41,23 +84,35 @@ function DiscardPile({
             : "bg-stone-900 border border-stone-700"
       }`}
     >
-      <div className="flex items-center justify-between text-[10px] mb-1">
-        <span
-          className={
-            isHero
-              ? "text-emerald-300 font-bold"
-              : isThreat
-                ? "text-red-300 font-bold"
-                : "text-stone-400"
-          }
-        >
-          {label}
-        </span>
-        {riichiTurn !== null && (
-          <span className="text-yellow-300 font-bold">
-            立直 (T{riichiTurn})
+      <div className="flex items-center justify-between text-[10px] mb-1 flex-wrap gap-1">
+        <div className="flex items-center">
+          <span
+            className={
+              isHero
+                ? "text-emerald-300 font-bold"
+                : isThreat
+                  ? "text-red-300 font-bold"
+                  : "text-stone-400"
+            }
+          >
+            {label}
           </span>
-        )}
+          <YakuhaiBadges melds={melds} />
+        </div>
+        <div className="flex gap-1">
+          {riichiTurn !== null && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] bg-yellow-500 text-black font-bold">
+              立直 (T{riichiTurn})
+            </span>
+          )}
+          {threatKind && riichiTurn === null && (
+            <span
+              className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${THREAT_LABEL[threatKind]?.cls ?? "bg-stone-600 text-white"}`}
+            >
+              {THREAT_LABEL[threatKind]?.text ?? threatKind}
+            </span>
+          )}
+        </div>
       </div>
       {melds.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-1 p-1 bg-stone-950 rounded">
@@ -87,7 +142,9 @@ function DiscardPile({
 }
 
 export function BoardStateView({ board }: { board: BoardState }) {
-  const threatSet = new Set(board.threats.map((t) => t.player));
+  const threatKindBySeat = new Map<number, string>(
+    board.threats.map((t) => [t.player, t.kind])
+  );
   return (
     <div className="bg-stone-800 rounded-lg p-4 mb-3">
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -111,9 +168,9 @@ export function BoardStateView({ board }: { board: BoardState }) {
             tiles={board.discards[seat] ?? []}
             melds={board.open_melds[seat] ?? []}
             riichiTurn={board.riichi_turns[seat]}
+            threatKind={threatKindBySeat.get(seat) ?? null}
             label={`${SEAT_NAME[seat]} (座 ${seat})${seat === board.hero_seat ? " — 你" : ""}`}
             isHero={seat === board.hero_seat}
-            isThreat={threatSet.has(seat)}
           />
         ))}
       </div>

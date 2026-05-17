@@ -343,6 +343,7 @@ def _process_discard(
             riichi_declared_turn,
             melds_count,
             dora_inds,
+            open_melds,
         )
         if threats and drawn_code is not None:
             pre_hand_codes = sorted(hands[hero_seat] + [drawn_code])
@@ -417,11 +418,14 @@ def _build_threats(
     riichi_declared_turn: list[int | None],
     melds_count: list[int],
     dora_indicators: list[Tile],
+    open_melds: list[list[list[Tile]]] | None = None,
 ) -> list[Threat]:
     threats: list[Threat] = []
+    open_melds = open_melds or [[] for _ in range(4)]
     for seat in range(4):
         if seat == hero_seat:
             continue
+        called_tiles = [t for meld in open_melds[seat] for t in meld]
         if riichi_declared_turn[seat] is not None:
             threats.append(
                 Threat(
@@ -430,12 +434,11 @@ def _build_threats(
                     declared_turn=riichi_declared_turn[seat],
                     discards=list(discard_piles[seat]),
                     discards_after_threat=list(discards_after_riichi[seat]),
-                    called_tiles=[],
+                    called_tiles=called_tiles,
                     dora_indicators=list(dora_indicators),
                 )
             )
-        elif melds_count[seat] >= 2 and len(discard_piles[seat]) >= 8:
-            # heuristic dama-tenpai threat: 2+ called melds late in the round
+        elif melds_count[seat] >= 2 and len(discard_piles[seat]) >= 7:
             threats.append(
                 Threat(
                     player=seat,
@@ -443,8 +446,36 @@ def _build_threats(
                     declared_turn=len(discard_piles[seat]),
                     discards=list(discard_piles[seat]),
                     discards_after_threat=[],
-                    called_tiles=[],
+                    called_tiles=called_tiles,
+                    dora_indicators=list(dora_indicators),
+                )
+            )
+        elif _looks_like_late_iishanten(discard_piles[seat], melds_count[seat]):
+            threats.append(
+                Threat(
+                    player=seat,
+                    kind=ThreatKind.IISHANTEN,
+                    declared_turn=len(discard_piles[seat]),
+                    discards=list(discard_piles[seat]),
+                    discards_after_threat=[],
+                    called_tiles=called_tiles,
                     dora_indicators=list(dora_indicators),
                 )
             )
     return threats
+
+
+def _looks_like_late_iishanten(pile: list[Tile], melds: int) -> bool:
+    """Heuristic: 8+ turns deep, last 3 discards are all middle tiles (2..8)
+    suggesting they've finished sorting out floating yaochuu — likely close to
+    tenpai even without a riichi declaration."""
+    if len(pile) < 8:
+        return False
+    last = pile[-3:]
+    if any(t.is_yaochuu for t in last):
+        return False
+    # also require they discarded yaochuu in the first half (typical pattern)
+    early = pile[: max(1, len(pile) // 2)]
+    if not any(t.is_yaochuu for t in early):
+        return False
+    return True
