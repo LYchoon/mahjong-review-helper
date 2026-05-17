@@ -9,7 +9,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from ..analyzer import DecisionReview, HeroState, review_decision
+from ..analyzer import (
+    DecisionReview,
+    GameSummary,
+    HeroState,
+    review_decision,
+    summarise_game,
+)
 from ..danger import Threat, ThreatKind
 from ..parsers.tenhou import Snapshot, parse_tenhou_log
 from ..shanten import shanten as compute_shanten
@@ -72,6 +78,22 @@ class AlternativeOut(BaseModel):
     push_ev: float
     win_prob: float
     factors: list[FactorOut]
+    shanten_after: int
+    ukeire: int
+    future_safe_tiles: int
+    han_estimate: int
+    yaku_tags: list[str]
+
+
+class BoardStateOut(BaseModel):
+    round_label: str
+    turn: int
+    hero_seat: int
+    hero_hand: list[str]
+    discards: list[list[str]]  # 4 piles
+    riichi_turns: list[int | None]
+    dora_indicators: list[str]
+    threats: list[dict[str, object]]
 
 
 class DecisionReviewOut(BaseModel):
@@ -87,11 +109,25 @@ class DecisionReviewOut(BaseModel):
     recommendation_win_prob: float
     your_reasons: list[str]
     recommendation_reasons: list[str]
+    board: BoardStateOut | None = None
+
+
+class GameSummaryOut(BaseModel):
+    total: int
+    best: int
+    good: int
+    inaccuracy: int
+    mistake: int
+    blunder: int
+    accuracy: float
+    total_ev_lost: float
+    biggest_blunder_index: int | None  # index into decisions list
 
 
 class TenhouReviewResponse(BaseModel):
     hero_seat: int
     decisions: list[DecisionReviewOut]
+    summary: GameSummaryOut
 
 
 # -------- routes --------
@@ -157,7 +193,8 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"tenhou parse failed: {e}")
 
-    decisions: list[DecisionReviewOut] = []
+    decisions_out: list[DecisionReviewOut] = []
+    reviews: list[DecisionReview] = []
     for snap in snapshots:
         hero = HeroState(
             seat=snap.hero_seat,
@@ -168,6 +205,7 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
             turn=snap.turn,
             turns_remaining=max(1, 18 - snap.turn),
             round_wind=snap.round_wind,
+            seat_wind=27 + ((req.hero_seat - snap.round_index) % 4),
         )
         try:
             review = review_decision(
@@ -175,9 +213,30 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
             )
         except Exception:
             continue
-        decisions.append(_serialize_review(review))
+        reviews.append(review)
+        out = _serialize_review(review)
+        out.board = _board_from_snapshot(snap)
+        decisions_out.append(out)
 
-    return TenhouReviewResponse(hero_seat=req.hero_seat, decisions=decisions)
+    summary = summarise_game(reviews)
+    biggest_idx = (
+        reviews.index(summary.biggest_blunder) if summary.biggest_blunder else None
+    )
+    summary_out = GameSummaryOut(
+        total=summary.total,
+        best=summary.best,
+        good=summary.good,
+        inaccuracy=summary.inaccuracy,
+        mistake=summary.mistake,
+        blunder=summary.blunder,
+        accuracy=summary.accuracy,
+        total_ev_lost=round(summary.total_ev_lost, 0),
+        biggest_blunder_index=biggest_idx,
+    )
+
+    return TenhouReviewResponse(
+        hero_seat=req.hero_seat, decisions=decisions_out, summary=summary_out
+    )
 
 
 # -------- helpers --------
@@ -194,6 +253,31 @@ def _count_dora(snap: Snapshot) -> int:
         if t.tid in indicator_doras:
             n += 1
     return n
+
+
+_ROUND_LABELS = ["東1", "東2", "東3", "東4", "南1", "南2", "南3", "南4"]
+
+
+def _board_from_snapshot(snap: Snapshot) -> BoardStateOut:
+    return BoardStateOut(
+        round_label=_ROUND_LABELS[snap.round_index]
+        if snap.round_index < len(_ROUND_LABELS)
+        else f"R{snap.round_index + 1}",
+        turn=snap.turn,
+        hero_seat=snap.hero_seat,
+        hero_hand=[str(t) for t in snap.hero_hand],
+        discards=[[str(t) for t in pile] for pile in snap.all_discards],
+        riichi_turns=list(snap.riichi_turns),
+        dora_indicators=[str(t) for t in snap.dora_indicators],
+        threats=[
+            {
+                "player": t.player,
+                "kind": t.kind.value,
+                "declared_turn": t.declared_turn,
+            }
+            for t in snap.threats
+        ],
+    )
 
 
 def _next_tile_id(indicator_tid: int) -> int:
@@ -218,6 +302,11 @@ def _serialize_review(r: DecisionReview) -> DecisionReviewOut:
             push_ev=round(a.push_ev, 0),
             win_prob=round(a.win_prob, 3),
             factors=[FactorOut(code=f.code, label=f.label, delta=f.delta) for f in a.factors],
+            shanten_after=a.shanten_after,
+            ukeire=a.ukeire,
+            future_safe_tiles=a.future_safe_tiles,
+            han_estimate=a.han_estimate,
+            yaku_tags=a.yaku_tags,
         )
 
     return DecisionReviewOut(

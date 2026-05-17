@@ -14,11 +14,34 @@ export type Alternative = {
   push_ev: number;
   win_prob: number;
   factors: Factor[];
+  shanten_after: number;
+  ukeire: number;
+  future_safe_tiles: number;
+  han_estimate: number;
+  yaku_tags: string[];
+};
+
+export type DecisionLabel =
+  | "best"
+  | "good"
+  | "inaccuracy"
+  | "mistake"
+  | "blunder";
+
+export type BoardState = {
+  round_label: string;
+  turn: number;
+  hero_seat: number;
+  hero_hand: string[];
+  discards: string[][];
+  riichi_turns: (number | null)[];
+  dora_indicators: string[];
+  threats: { player: number; kind: string; declared_turn: number }[];
 };
 
 export type DecisionReview = {
   situation: string;
-  label: "best" | "good" | "inaccuracy" | "mistake" | "blunder";
+  label: DecisionLabel;
   summary: string;
   your_choice: Alternative;
   recommendation: Alternative;
@@ -29,6 +52,19 @@ export type DecisionReview = {
   recommendation_win_prob: number;
   your_reasons: string[];
   recommendation_reasons: string[];
+  board?: BoardState;
+};
+
+export type GameSummary = {
+  total: number;
+  best: number;
+  good: number;
+  inaccuracy: number;
+  mistake: number;
+  blunder: number;
+  accuracy: number;
+  total_ev_lost: number;
+  biggest_blunder_index: number | null;
 };
 
 export type ManualReviewRequest = {
@@ -69,7 +105,11 @@ export async function reviewManual(
 export async function reviewTenhou(
   log: unknown,
   heroSeat: number
-): Promise<{ hero_seat: number; decisions: DecisionReview[] }> {
+): Promise<{
+  hero_seat: number;
+  decisions: DecisionReview[];
+  summary: GameSummary;
+}> {
   const r = await fetch(`${API_BASE}/review/tenhou`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

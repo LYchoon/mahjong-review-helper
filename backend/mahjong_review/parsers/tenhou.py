@@ -94,6 +94,8 @@ class Snapshot:
     visible_counts: list[int]
     threats: list[Threat]
     dora_indicators: list[Tile]
+    all_discards: list[list[Tile]] = field(default_factory=list)  # 4 piles
+    riichi_turns: list[int | None] = field(default_factory=list)  # per seat
 
 
 # --- main parser ---
@@ -146,140 +148,225 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
 
     snaps: list[Snapshot] = []
     turn_counter = [0, 0, 0, 0]
-
-    # iterate turn-by-turn, simulating the natural draw->discard order
-    # We process in the order tenhou logs them: for each "round" the draws/discards
-    # are roughly chronological by seat dealer-first but interleaved by calls.
-    # A simpler-but-correct approach: pointer per seat in draws/discards; the next
-    # action belongs to whichever seat has a pending draw that hasn't been discarded.
     draw_ptr = [0, 0, 0, 0]
     disc_ptr = [0, 0, 0, 0]
 
-    # Dealer of this round
     dealer = round_number % 4
     active = dealer
 
-    safety_iters = 0
-    while True:
-        safety_iters += 1
-        if safety_iters > 400:
-            break  # malformed round; bail
-        # active seat draws (if they have draws left)
-        if draw_ptr[active] >= len(draws[active]):
-            break
+    def bump_visible(tid: int) -> None:
+        if visible_counts[tid] < 4:
+            visible_counts[tid] += 1
 
-        draw_entry = draws[active][draw_ptr[active]]
+    safety_iters = 0
+    while safety_iters < 600:
+        safety_iters += 1
+
+        # Before active draws, check if any OTHER seat is intercepting with a call
+        # (chi/pon/daiminkan) — these appear as strings at the head of their draws.
+        interceptor = None
+        for s in range(4):
+            if s == active or draw_ptr[s] >= len(draws[s]):
+                continue
+            ent = draws[s][draw_ptr[s]]
+            if isinstance(ent, str) and ent[0] in ("c", "p", "m"):
+                interceptor = s
+                break
+        if interceptor is not None:
+            active = interceptor
+
+        if draw_ptr[active] >= len(draws[active]):
+            # try to find any seat with remaining draws (could be us out of sync)
+            remaining = [s for s in range(4) if draw_ptr[s] < len(draws[s])]
+            if not remaining:
+                break
+            active = remaining[0]
+
+        entry = draws[active][draw_ptr[active]]
         draw_ptr[active] += 1
 
-        if isinstance(draw_entry, str):
-            # call (chi/pon/kan); the called tile entered hand from someone else's discard.
-            # For visibility, we add the called tile to visible_counts (was in some discard)
-            # and add the meld to the seat.
-            kind = draw_entry[0]
-            tile_chars = draw_entry[1:]
-            # extract digit groups (each tile is 2 digits in tenhou notation)
-            tile_codes = _split_call_tiles(tile_chars)
-            new_meld_tiles = [_decode_tenhou_tile(c) for c in tile_codes]
-            # the called tile (from another player's discard) becomes visible if it wasn't
-            for t in new_meld_tiles:
-                visible_counts[t.tid] += 1
-            if kind in ("c", "p", "m"):
-                melds_count[active] += 1
-            elif kind in ("a", "k"):
-                # ankan: 4 tiles from own hand -> reveal them
-                # kakan: add 1 to existing pon
+        if isinstance(entry, str):
+            kind = entry[0]
+            tile_codes = _split_call_tiles(entry[1:])
+            tiles_in_call = [_decode_tenhou_tile(c) for c in tile_codes]
+
+            if kind in ("a", "k"):
+                # Concealed / added kan during own turn — no discard handed out yet here.
+                # Bump visibility for revealed tiles; melds_count += 1 for ankan only.
+                for t in tiles_in_call:
+                    bump_visible(t.tid)
                 if kind == "a":
                     melds_count[active] += 1
-        else:
-            # numeric draw — drew a tile from the wall
-            drawn = _decode_tenhou_tile(int(draw_entry))
-            if active == hero_seat:
-                # add to visible (we know our own draw)
-                visible_counts[drawn.tid] += 1
-
-            # now this seat must discard — find next discard entry
-            if disc_ptr[active] >= len(discards[active]):
-                break
-            disc_entry = discards[active][disc_ptr[active]]
-            disc_ptr[active] += 1
-            turn_counter[active] += 1
-
-            # determine actual discarded tile
-            riichi_now = False
-            if isinstance(disc_entry, str):
-                if disc_entry == "60":
-                    discarded = drawn  # tsumogiri
-                elif disc_entry.startswith("r"):
-                    riichi_now = True
-                    tail = disc_entry[1:]
-                    if tail == "60":
-                        discarded = drawn
-                    else:
-                        discarded = _decode_tenhou_tile(int(tail))
-                else:
-                    # unknown event — treat as no-op for MVP
-                    continue
+                # active stays — they'll draw rinshan next iteration
+                continue
             else:
-                discarded = _decode_tenhou_tile(int(disc_entry))
-
-            # update visible counts for the discarded tile (already counted if hero's own draw)
-            if active != hero_seat:
-                visible_counts[discarded.tid] += 1
-
-            discard_piles[active].append(discarded)
-            if riichi_declared_turn[active] is not None:
-                discards_after_riichi[active].append(discarded)
-
-            # ---- BEFORE discarding, snapshot the hero's decision if applicable ----
-            if active == hero_seat:
-                threats = _build_threats(
-                    hero_seat,
+                # chi/pon/daiminkan — out-of-turn intercept
+                for t in tiles_in_call:
+                    bump_visible(t.tid)
+                melds_count[active] += 1
+                # active now must discard (no draw — they used the called tile)
+                if disc_ptr[active] >= len(discards[active]):
+                    break
+                _process_discard(
+                    active,
+                    discards,
+                    disc_ptr,
+                    None,
+                    hands,
                     discard_piles,
                     discards_after_riichi,
                     riichi_declared_turn,
+                    turn_counter,
+                    visible_counts,
+                    hero_seat,
+                    snaps,
+                    round_idx,
+                    round_wind,
+                    honba,
+                    riichi_sticks,
                     melds_count,
                     dora_inds,
                 )
-                if threats:
-                    # reconstruct the hand *before* this discard: it includes the drawn tile
-                    pre_hand_codes = sorted(hands[hero_seat] + [int(draw_entry)])
-                    pre_hand = [_decode_tenhou_tile(n) for n in pre_hand_codes]
-                    snaps.append(
-                        Snapshot(
-                            round_index=round_idx,
-                            round_wind=round_wind,
-                            honba=honba,
-                            riichi_sticks=riichi_sticks,
-                            turn=turn_counter[active],
-                            hero_seat=hero_seat,
-                            hero_hand=pre_hand,
-                            hero_melds_count=melds_count[hero_seat],
-                            hero_chosen_discard=discarded,
-                            visible_counts=list(visible_counts),
-                            threats=threats,
-                            dora_indicators=list(dora_inds),
-                        )
-                    )
+                # active stays; if no further interceptor, next iter will find them with no pending draws
+                # and rotate via the fallback. To rotate properly:
+                active = (active + 1) % 4
+                continue
 
-            # update hand: add draw, remove discard
-            hands[active].append(int(draw_entry))
-            try:
-                hands[active].remove(_encode_tile(discarded))
-            except ValueError:
-                # red 5 mismatch (e.g. discarded "60" was the red 5) — try alt
-                alt = _alt_encoding(discarded)
-                if alt is not None and alt in hands[active]:
-                    hands[active].remove(alt)
-                else:
-                    pass
+        # normal numeric draw
+        drawn_code = int(entry)
+        drawn = _decode_tenhou_tile(drawn_code)
+        if active == hero_seat:
+            bump_visible(drawn.tid)
 
-            if riichi_now:
-                riichi_declared_turn[active] = turn_counter[active]
+        if disc_ptr[active] >= len(discards[active]):
+            break
 
-        # next seat (calls may have changed who's active, but we approximate)
+        _process_discard(
+            active,
+            discards,
+            disc_ptr,
+            drawn_code,
+            hands,
+            discard_piles,
+            discards_after_riichi,
+            riichi_declared_turn,
+            turn_counter,
+            visible_counts,
+            hero_seat,
+            snaps,
+            round_idx,
+            round_wind,
+            honba,
+            riichi_sticks,
+            melds_count,
+            dora_inds,
+        )
         active = (active + 1) % 4
 
     return snaps
+
+
+def _process_discard(
+    active: int,
+    discards: list[list[Any]],
+    disc_ptr: list[int],
+    drawn_code: int | None,
+    hands: list[list[int]],
+    discard_piles: list[list[Tile]],
+    discards_after_riichi: list[list[Tile]],
+    riichi_declared_turn: list[int | None],
+    turn_counter: list[int],
+    visible_counts: list[int],
+    hero_seat: int,
+    snaps: list[Snapshot],
+    round_idx: int,
+    round_wind: int,
+    honba: int,
+    riichi_sticks: int,
+    melds_count: list[int],
+    dora_inds: list[Tile],
+) -> None:
+    disc_entry = discards[active][disc_ptr[active]]
+    disc_ptr[active] += 1
+    turn_counter[active] += 1
+
+    riichi_now = False
+    drawn_tile = _decode_tenhou_tile(drawn_code) if drawn_code is not None else None
+
+    if isinstance(disc_entry, str):
+        if disc_entry == "60":
+            if drawn_tile is None:
+                return
+            discarded = drawn_tile
+        elif disc_entry.startswith("r"):
+            riichi_now = True
+            tail = disc_entry[1:]
+            if tail == "60":
+                if drawn_tile is None:
+                    return
+                discarded = drawn_tile
+            else:
+                discarded = _decode_tenhou_tile(int(tail))
+        elif disc_entry[0] in ("c", "p", "m", "a", "k"):
+            # rare — embedded mid-discard call; skip
+            return
+        else:
+            return
+    else:
+        discarded = _decode_tenhou_tile(int(disc_entry))
+
+    # visibility for the discarded tile (own draw already counted at draw time)
+    if active != hero_seat:
+        if visible_counts[discarded.tid] < 4:
+            visible_counts[discarded.tid] += 1
+
+    discard_piles[active].append(discarded)
+    if riichi_declared_turn[active] is not None:
+        discards_after_riichi[active].append(discarded)
+
+    # snapshot before mutating hero's hand
+    if active == hero_seat:
+        threats = _build_threats(
+            hero_seat,
+            discard_piles,
+            discards_after_riichi,
+            riichi_declared_turn,
+            melds_count,
+            dora_inds,
+        )
+        if threats and drawn_code is not None:
+            pre_hand_codes = sorted(hands[hero_seat] + [drawn_code])
+            pre_hand = [_decode_tenhou_tile(n) for n in pre_hand_codes]
+            snaps.append(
+                Snapshot(
+                    round_index=round_idx,
+                    round_wind=round_wind,
+                    honba=honba,
+                    riichi_sticks=riichi_sticks,
+                    turn=turn_counter[active],
+                    hero_seat=hero_seat,
+                    hero_hand=pre_hand,
+                    hero_melds_count=melds_count[hero_seat],
+                    hero_chosen_discard=discarded,
+                    visible_counts=list(visible_counts),
+                    threats=threats,
+                    dora_indicators=list(dora_inds),
+                    all_discards=[list(p) for p in discard_piles],
+                    riichi_turns=list(riichi_declared_turn),
+                )
+            )
+
+    if drawn_code is not None:
+        hands[active].append(drawn_code)
+    try:
+        hands[active].remove(_encode_tile(discarded))
+    except ValueError:
+        alt = _alt_encoding(discarded)
+        if alt is not None and alt in hands[active]:
+            hands[active].remove(alt)
+
+    if riichi_now:
+        riichi_declared_turn[active] = turn_counter[active]
 
 
 def _split_call_tiles(s: str) -> list[int]:

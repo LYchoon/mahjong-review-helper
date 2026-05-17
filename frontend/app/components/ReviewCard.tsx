@@ -13,6 +13,12 @@ function dangerColor(score: number): string {
   return "text-blunder";
 }
 
+function shantenLabel(sh: number): string {
+  if (sh < 0) return "已和";
+  if (sh === 0) return "聽牌";
+  return `${sh} 向聽`;
+}
+
 function AlternativeRow({
   alt,
   variant,
@@ -21,18 +27,26 @@ function AlternativeRow({
   variant?: "chosen" | "recommend" | undefined;
 }) {
   return (
-    <div className="flex items-center gap-3 py-2 border-b border-stone-700 last:border-b-0">
+    <div className="flex items-start gap-3 py-2 border-b border-stone-700 last:border-b-0">
       <Tile notation={alt.tile} size="sm" highlight={variant} />
-      <div className="flex-1">
-        <div className="flex items-baseline gap-2">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 flex-wrap">
           <span className={`font-mono font-semibold ${dangerColor(alt.danger)}`}>
             危險 {alt.danger}
           </span>
           <span className="text-xs text-stone-400">{alt.verdict}</span>
+          <span className="text-xs text-stone-500">
+            · {shantenLabel(alt.shanten_after)}
+          </span>
+          {alt.ukeire > 0 && (
+            <span className="text-xs text-stone-500">
+              · 進張 {alt.ukeire}
+            </span>
+          )}
         </div>
         <div className="text-[11px] text-stone-400">
           押期望 {alt.push_ev >= 0 ? "+" : ""}
-          {alt.push_ev} · 和率 {(alt.win_prob * 100).toFixed(1)}%
+          {alt.push_ev} · 和率 {(alt.win_prob * 100).toFixed(1)}% · 估{alt.han_estimate}翻
         </div>
         {alt.factors.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
@@ -56,6 +70,62 @@ function AlternativeRow({
   );
 }
 
+function ChoicePanel({
+  title,
+  titleClass,
+  alt,
+  pushEv,
+  reasons,
+  variant,
+}: {
+  title: string;
+  titleClass: string;
+  alt: Alternative;
+  pushEv: number;
+  reasons: string[];
+  variant: "chosen" | "recommend";
+}) {
+  return (
+    <div className="bg-stone-900 rounded p-3">
+      <div className={`text-xs font-semibold mb-2 ${titleClass}`}>{title}</div>
+      <div className="flex items-center gap-3 mb-2">
+        <Tile notation={alt.tile} size="md" highlight={variant} />
+        <div className="min-w-0">
+          <div className={`font-mono ${dangerColor(alt.danger)}`}>
+            危險 {alt.danger} · {alt.verdict}
+          </div>
+          <div className="text-xs text-stone-400">
+            押牌期望值 {pushEv >= 0 ? "+" : ""}
+            {pushEv} 點 · 和率 {(alt.win_prob * 100).toFixed(1)}%
+          </div>
+          <div className="text-xs text-stone-500 mt-0.5">
+            切後 {shantenLabel(alt.shanten_after)}
+            {alt.ukeire > 0 && ` · 進張 ${alt.ukeire} 枚`}
+            {` · 殘餘安全牌 ${alt.future_safe_tiles}`}
+          </div>
+          {alt.yaku_tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {alt.yaku_tags.map((tag, i) => (
+                <span
+                  key={i}
+                  className="px-1.5 py-0.5 rounded text-[10px] bg-amber-900/40 text-amber-200"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <ul className="text-xs text-stone-300 space-y-0.5">
+        {reasons.map((r, i) => (
+          <li key={i}>· {r}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function ReviewCard({ review }: { review: DecisionReview }) {
   return (
     <div className="bg-stone-800 rounded-lg p-5 space-y-4">
@@ -69,56 +139,27 @@ export function ReviewCard({ review }: { review: DecisionReview }) {
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
-        <div className="bg-stone-900 rounded p-3">
-          <div className="text-xs font-semibold text-mistake mb-2">你的選擇</div>
-          <div className="flex items-center gap-3 mb-2">
-            <Tile notation={review.your_choice.tile} size="md" highlight="chosen" />
-            <div>
-              <div className={`font-mono ${dangerColor(review.your_choice.danger)}`}>
-                危險 {review.your_choice.danger} · {review.your_choice.verdict}
-              </div>
-              <div className="text-xs text-stone-400">
-                押牌期望值 {review.your_push_ev >= 0 ? "+" : ""}
-                {review.your_push_ev} 點
-              </div>
-            </div>
-          </div>
-          <ul className="text-xs text-stone-300 space-y-0.5">
-            {review.your_reasons.map((r, i) => (
-              <li key={i}>· {r}</li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="bg-stone-900 rounded p-3">
-          <div className="text-xs font-semibold text-good mb-2">建議選擇</div>
-          <div className="flex items-center gap-3 mb-2">
-            <Tile
-              notation={review.recommendation.tile}
-              size="md"
-              highlight="recommend"
-            />
-            <div>
-              <div className={`font-mono ${dangerColor(review.recommendation.danger)}`}>
-                危險 {review.recommendation.danger} · {review.recommendation.verdict}
-              </div>
-              <div className="text-xs text-stone-400">
-                押牌期望值 {review.recommendation_push_ev >= 0 ? "+" : ""}
-                {review.recommendation_push_ev} 點
-              </div>
-            </div>
-          </div>
-          <ul className="text-xs text-stone-300 space-y-0.5">
-            {review.recommendation_reasons.map((r, i) => (
-              <li key={i}>· {r}</li>
-            ))}
-          </ul>
-        </div>
+        <ChoicePanel
+          title="你的選擇"
+          titleClass="text-mistake"
+          alt={review.your_choice}
+          pushEv={review.your_push_ev}
+          reasons={review.your_reasons}
+          variant="chosen"
+        />
+        <ChoicePanel
+          title="建議選擇"
+          titleClass="text-good"
+          alt={review.recommendation}
+          pushEv={review.recommendation_push_ev}
+          reasons={review.recommendation_reasons}
+          variant="recommend"
+        />
       </div>
 
       <details className="bg-stone-900 rounded p-3">
         <summary className="text-xs text-stone-400 cursor-pointer select-none">
-          所有候選 (依期望值排序) · {review.alternatives.length} 張
+          所有候選 (依押牌期望值排序) · {review.alternatives.length} 張
         </summary>
         <div className="mt-2">
           {review.alternatives.map((alt) => (

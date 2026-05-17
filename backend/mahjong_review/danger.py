@@ -139,12 +139,61 @@ def assess_tile(
         kabe_adj = _kabe_adjustment(tile, visible_counts, factors)
         score += kabe_adj
 
-    # --- 5. threat strength multiplier ---
+    # --- 5. suit-clear / honitsu suspicion ---
+    score += _suit_suspicion_adjustment(tile, threat, factors)
+
+    # --- 6. threat strength multiplier ---
     score = _apply_threat_strength(score, threat, factors)
 
     # clamp
     score = max(0.0, min(100.0, score))
     return DangerAssessment(tile, score, factors)
+
+
+def _suit_suspicion_adjustment(
+    tile: Tile, threat: Threat, factors: list[DangerFactor]
+) -> float:
+    """If the threat has discarded many tiles of two suits and almost none of a third,
+    they likely concentrate on that third suit (honitsu / chinitsu). Tiles of that
+    suit become more dangerous; tiles of the abandoned suits become safer."""
+    if not threat.discards:
+        return 0.0
+    counts = {"m": 0, "p": 0, "s": 0, "z": 0}
+    for t in threat.discards:
+        counts[t.suit] += 1
+    total_number = counts["m"] + counts["p"] + counts["s"]
+    if total_number < 6:
+        return 0.0
+
+    # find a suit they've barely discarded relative to the others
+    suit_keys = ("m", "p", "s")
+    min_suit = min(suit_keys, key=lambda k: counts[k])
+    other_total = total_number - counts[min_suit]
+    if counts[min_suit] <= 1 and other_total >= 6:
+        if tile.suit == min_suit:
+            factors.append(
+                DangerFactor(
+                    "SUIT_CONCENTRATION",
+                    f"對手河中幾乎不出 {_suit_chinese(min_suit)}，疑似染手/染色",
+                    +12,
+                )
+            )
+            return 12.0
+        elif tile.suit in suit_keys:
+            # safer: they're discarding this suit freely
+            factors.append(
+                DangerFactor(
+                    "SUIT_ABANDONED",
+                    f"對手已切多枚{_suit_chinese(tile.suit)}，本色相對安全",
+                    -6,
+                )
+            )
+            return -6.0
+    return 0.0
+
+
+def _suit_chinese(suit: str) -> str:
+    return {"m": "萬子", "p": "筒子", "s": "索子", "z": "字牌"}[suit]
 
 
 def _base_honor_danger(

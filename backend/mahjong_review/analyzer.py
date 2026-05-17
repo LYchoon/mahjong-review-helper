@@ -1,15 +1,16 @@
 """Decision analyser.
 
 Given a snapshot of the game at a moment our hero must discard, decide whether
-their choice was good, and produce a chess.com-style review:
+their choice was good, and produce a chess.com-style review.
 
-    {
-      "situation": "...",
-      "your_choice": {"tile": "5m", "danger": 62, "verdict": "危險", "factors": [...]},
-      "recommendation": {"tile": "1z", "danger": 8, "action": "betaori", "reasons": [...]},
-      "alternatives": [ ... every tile ranked by safety + EV ... ],
-      "label": "blunder" | "mistake" | "inaccuracy" | "ok" | "best"
-    }
+Per-option scoring:
+    push_ev   = win_prob × est_value - deal_in_prob × est_cost
+    fold_ev   = 0 (baseline — full betaori sacrifices any chance)
+    win_prob  scales with shanten AND with ukeire (effective tile count remaining)
+    we also produce future_safety: how many tiles in hand are still safe-ish if we
+      have to keep defending next turn
+
+Output: best > good > inaccuracy > mistake > blunder labels with concrete reasons.
 """
 
 from __future__ import annotations
@@ -21,12 +22,12 @@ from .danger import (
     DangerAssessment,
     DangerFactor,
     Threat,
-    assess_hand,
     assess_tile,
 )
 from .ev import HandValue, PushFoldDecision, estimate_hand_value, evaluate_push
-from .shanten import shanten
-from .tiles import Tile, tile_counts
+from .hand_value import quick_yaku_han
+from .shanten import effective_tiles, shanten
+from .tiles import Tile
 
 
 Label = Literal["best", "good", "inaccuracy", "mistake", "blunder"]
@@ -39,11 +40,12 @@ class HeroState:
     seat: int  # 0..3
     hand: list[Tile]  # 13 or 14 tiles (concealed)
     melds_count: int = 0
-    dora_count: int = 0  # red 5s + indicator-derived dora in hand
+    dora_count: int = 0
     is_dealer: bool = False
     turn: int = 1
-    turns_remaining: int = 10  # rough
+    turns_remaining: int = 10
     round_wind: int = 27  # E
+    seat_wind: int = 27  # default E; analyzer derives proper value when given
 
 
 @dataclass
@@ -54,6 +56,11 @@ class AlternativeOption:
     push_ev: float
     win_prob: float
     factors: list[DangerFactor]
+    shanten_after: int  # shanten of the hand after this discard
+    ukeire: int  # remaining useful tiles to advance (0 if win/no progress)
+    future_safe_tiles: int  # how many tiles still ≤30 danger left in hand
+    han_estimate: int
+    yaku_tags: list[str]
 
 
 @dataclass
@@ -78,55 +85,41 @@ def review_decision(
     if len(hero.hand) not in (13, 14):
         raise ValueError(f"hand must have 13 or 14 tiles, got {len(hero.hand)}")
 
-    # Use the most threatening opponent (highest avg danger across hand).
     threat = _pick_primary_threat(threats, hero.hand, visible_counts, hero.round_wind)
 
-    # Score every tile in hand against this threat.
+    # danger assessment per distinct tile
     assessments_by_tid: dict[int, DangerAssessment] = {}
     for t in hero.hand:
         if t.tid in assessments_by_tid:
             continue
-        assessments_by_tid[t.tid] = assess_tile(
-            t, threat, visible_counts, hero.round_wind
-        )
+        assessments_by_tid[t.tid] = assess_tile(t, threat, visible_counts, hero.round_wind)
 
-    # Compute push EV for every choice — but we need shanten *after* discarding.
-    chosen_assessment = assessments_by_tid[chosen_discard.tid]
+    # evaluate every discard option
     options: list[tuple[AlternativeOption, PushFoldDecision]] = []
-    for tid, asmt in assessments_by_tid.items():
-        opt, decision = _evaluate_discard_option(
-            asmt, hero, threat
-        )
+    for asmt in assessments_by_tid.values():
+        opt, decision = _evaluate_discard_option(asmt, hero, threat, visible_counts)
         options.append((opt, decision))
 
-    # rank: higher push_ev wins; ties broken by lower danger
+    # rank: higher EV first; tie-break by lower danger
     options.sort(key=lambda od: (-od[1].push_ev, od[0].danger))
-
     best_opt, best_decision = options[0]
-
-    # find user's choice in our table
-    your_pair = next(
+    your_opt, your_decision = next(
         (od for od in options if od[0].tile.tid == chosen_discard.tid),
         options[-1],
     )
-    your_opt, your_decision = your_pair
 
-    # label
     ev_gap = best_decision.push_ev - your_decision.push_ev
-    label = _classify(ev_gap, your_opt.danger, best_opt.danger)
-
-    situation = _describe_situation(threat, hero)
-    summary = _summarise(label, your_opt, best_opt, ev_gap)
+    label = _classify(ev_gap, your_opt, best_opt)
 
     return DecisionReview(
-        situation=situation,
+        situation=_describe_situation(threat, hero),
         your_choice=your_opt,
         your_decision=your_decision,
         recommendation=best_opt,
         recommendation_decision=best_decision,
         alternatives=[o for o, _ in options],
         label=label,
-        summary=summary,
+        summary=_summarise(label, your_opt, best_opt, ev_gap),
     )
 
 
@@ -140,11 +133,9 @@ def _pick_primary_threat(
         raise ValueError("no threats provided — defense review requires at least one threat")
     if len(threats) == 1:
         return threats[0]
-    # primary = the threat where our average danger across hand is highest
+
     def avg_danger(th: Threat) -> float:
-        scores = [
-            assess_tile(t, th, visible_counts, round_wind).score for t in hand
-        ]
+        scores = [assess_tile(t, th, visible_counts, round_wind).score for t in hand]
         return sum(scores) / max(len(scores), 1)
 
     return max(threats, key=avg_danger)
@@ -154,16 +145,50 @@ def _evaluate_discard_option(
     assessment: DangerAssessment,
     hero: HeroState,
     threat: Threat,
+    visible_counts: list[int],
 ) -> tuple[AlternativeOption, PushFoldDecision]:
     after_hand = _hand_without(hero.hand, assessment.tile)
     sh = shanten(after_hand, hero.melds_count)
 
-    # estimate value: 1 (riichi if closed) + 1 (tsumo/dora bias) + dora_count
-    han_est = hero.dora_count + (1 if hero.melds_count == 0 else 0) + 1
+    # ukeire: useful tiles to advance, counting only what's still unseen
+    if sh >= 0 and len(after_hand) == 13 - 3 * hero.melds_count:
+        eff = effective_tiles(after_hand, hero.melds_count)
+        ukeire = sum(max(0, 4 - visible_counts[t]) for t in eff)
+    else:
+        ukeire = 0
+
+    # yaku & value
+    han_est, tags = quick_yaku_han(
+        after_hand,
+        melds_count=hero.melds_count,
+        is_dealer=hero.is_dealer,
+        round_wind_tid=hero.round_wind,
+        seat_wind_tid=hero.seat_wind,
+        dora_count=hero.dora_count,
+        likely_to_riichi=(hero.melds_count == 0 and sh <= 1),
+    )
     value = estimate_hand_value(han_est, is_dealer=hero.is_dealer)
+
+    # adjust win probability by ukeire (a 1-shanten with 30 useful tiles is much better
+    # than a 1-shanten with 4). Cap at 1.5x boost / 0.4x penalty around baseline of 8 tiles.
     decision = evaluate_push(
         assessment, threat, sh, value, turns_remaining=hero.turns_remaining
     )
+    if sh > 0 and ukeire > 0:
+        adj = min(1.5, max(0.3, ukeire / 8.0))
+        decision.win_prob *= adj
+        decision.recompute()
+        decision.reasons.append(
+            f"剩餘有效進張 {ukeire} 枚 (調整後和率 {decision.win_prob*100:.1f}%)"
+        )
+
+    # future safety: count tiles still in hand whose danger is ≤30
+    future_safe = sum(
+        1
+        for t in after_hand
+        if assess_tile(t, threat, visible_counts, hero.round_wind).score <= 30
+    )
+
     opt = AlternativeOption(
         tile=assessment.tile,
         danger=assessment.score,
@@ -171,6 +196,11 @@ def _evaluate_discard_option(
         push_ev=decision.push_ev,
         win_prob=decision.win_prob,
         factors=assessment.factors,
+        shanten_after=sh,
+        ukeire=ukeire,
+        future_safe_tiles=future_safe,
+        han_estimate=han_est,
+        yaku_tags=tags,
     )
     return opt, decision
 
@@ -184,21 +214,27 @@ def _hand_without(hand: list[Tile], tile: Tile) -> list[Tile]:
     return out
 
 
-def _classify(ev_gap: float, your_danger: float, best_danger: float) -> Label:
-    if ev_gap <= 50:
+def _classify(ev_gap: float, your_opt: AlternativeOption, best_opt: AlternativeOption) -> Label:
+    """Classify the choice quality.
+
+    Uses absolute EV gap *and* danger gap as a sanity check — a tiny EV gap that
+    nonetheless adds 40+ danger points should still register as inaccuracy at minimum.
+    """
+    danger_gap = your_opt.danger - best_opt.danger
+    if ev_gap <= 80 and danger_gap < 15:
         return "best"
-    if ev_gap <= 300:
+    if ev_gap <= 300 and danger_gap < 25:
         return "good"
-    if ev_gap <= 800:
+    if ev_gap <= 900 and danger_gap < 45:
         return "inaccuracy"
-    if ev_gap <= 2000:
+    if ev_gap <= 2500:
         return "mistake"
     return "blunder"
 
 
 def _describe_situation(threat: Threat, hero: HeroState) -> str:
     rel = (threat.player - hero.seat) % 4
-    rel_name = {1: "下家", 2: "對家", 3: "上家"}[rel] if rel else "自家(?)"
+    rel_name = {1: "下家", 2: "對家", 3: "上家"}.get(rel, "自家(?)")
     kind = {
         "riichi": "立直",
         "dama_tenpai": "默聽嫌疑",
@@ -234,3 +270,49 @@ def _summarise(
         f"打 {your_opt.tile} 是嚴重失誤 (blunder) — 危險度 {your_opt.danger:.0f}，"
         f"幾乎必中。應全力 betaori，選 {best_opt.tile} (危險 {best_opt.danger:.0f})。"
     )
+
+
+# ---- game-level summary ----
+
+
+@dataclass
+class GameSummary:
+    """Aggregate stats across all defense decisions in a game."""
+
+    total: int = 0
+    best: int = 0
+    good: int = 0
+    inaccuracy: int = 0
+    mistake: int = 0
+    blunder: int = 0
+    total_ev_lost: float = 0.0
+    biggest_blunder: DecisionReview | None = None
+
+    @property
+    def accuracy(self) -> float:
+        """chess.com-style 0..100 score weighted toward severe errors."""
+        if self.total == 0:
+            return 100.0
+        weights = {"best": 1.0, "good": 0.9, "inaccuracy": 0.6, "mistake": 0.3, "blunder": 0.0}
+        weighted = (
+            self.best * weights["best"]
+            + self.good * weights["good"]
+            + self.inaccuracy * weights["inaccuracy"]
+            + self.mistake * weights["mistake"]
+            + self.blunder * weights["blunder"]
+        )
+        return round(weighted / self.total * 100, 1)
+
+
+def summarise_game(reviews: list[DecisionReview]) -> GameSummary:
+    summary = GameSummary(total=len(reviews))
+    biggest_gap = 0.0
+    for r in reviews:
+        bucket = getattr(summary, r.label)
+        setattr(summary, r.label, bucket + 1)
+        gap = r.recommendation_decision.push_ev - r.your_decision.push_ev
+        summary.total_ev_lost += max(0.0, gap)
+        if gap > biggest_gap:
+            biggest_gap = gap
+            summary.biggest_blunder = r
+    return summary

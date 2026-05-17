@@ -89,6 +89,13 @@ class PushFoldDecision:
     fold_ev: float  # baseline (~0)
     recommend_push: bool
     reasons: list[str]
+    hand_value_points: float = 0.0  # estimated payout if we win
+    deal_in_cost: float = 0.0  # estimated points lost on deal-in
+
+    def recompute(self) -> None:
+        """Re-derive push_ev from current win_prob/deal_in_prob/values."""
+        self.push_ev = self.win_prob * self.hand_value_points - self.deal_in_prob * self.deal_in_cost
+        self.recommend_push = self.push_ev > self.fold_ev
 
 
 def evaluate_push(
@@ -129,4 +136,6 @@ def evaluate_push(
         fold_ev=fold_ev,
         recommend_push=push_ev > fold_ev,
         reasons=reasons,
+        hand_value_points=own_hand_value.points,
+        deal_in_cost=cost,
     )

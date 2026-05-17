@@ -1,8 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { reviewManual, reviewTenhou, type DecisionReview } from "@/lib/api";
+import {
+  reviewManual,
+  reviewTenhou,
+  type DecisionReview,
+  type GameSummary,
+} from "@/lib/api";
+import { DecisionNavigator } from "./components/DecisionNavigator";
+import { GameSummaryCard } from "./components/GameSummary";
 import { ReviewCard } from "./components/ReviewCard";
 import { Tile } from "./components/Tile";
 
@@ -29,7 +36,6 @@ const SAMPLE: Parameters<typeof reviewManual>[0] = {
 };
 
 function parseTilesString(s: string): string[] {
-  // very lenient: split by whitespace, expand suit-suffix groups like "123m"
   const out: string[] = [];
   for (const chunk of s.trim().split(/\s+/).filter(Boolean)) {
     const m = chunk.match(/^([0-9]+)([mpsz])$/i);
@@ -53,6 +59,9 @@ export default function Page() {
   const [turn, setTurn] = useState(SAMPLE.turn ?? 6);
   const [threatPlayer, setThreatPlayer] = useState(1);
   const [threatTurn, setThreatTurn] = useState(5);
+  const [threatKind, setThreatKind] = useState<"riichi" | "dama_tenpai" | "iishanten">(
+    "riichi"
+  );
   const [threatDiscards, setThreatDiscards] = useState(
     SAMPLE.threats[0].discards.join(" ")
   );
@@ -61,14 +70,19 @@ export default function Page() {
   );
   const [visibleExtra, setVisibleExtra] = useState(SAMPLE.visible_tiles ?? "");
   const [doraCount, setDoraCount] = useState(0);
+  const [isDealer, setIsDealer] = useState(false);
 
-  const [results, setResults] = useState<DecisionReview[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [manualResult, setManualResult] = useState<DecisionReview | null>(null);
 
-  // tenhou
+  // tenhou state
   const [logJson, setLogJson] = useState("");
   const [heroSeat, setHeroSeat] = useState(0);
+  const [tenhouDecisions, setTenhouDecisions] = useState<DecisionReview[]>([]);
+  const [tenhouSummary, setTenhouSummary] = useState<GameSummary | null>(null);
+  const [decisionIdx, setDecisionIdx] = useState(0);
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   async function runManual() {
     setBusy(true);
@@ -82,38 +96,61 @@ export default function Page() {
         hero_seat: 0,
         dora_count: doraCount,
         melds_count: 0,
-        is_dealer: false,
+        is_dealer: isDealer,
         turns_remaining: Math.max(1, 18 - turn),
         visible_tiles: visibleExtra,
         threats: [
           {
             player: threatPlayer,
-            kind: "riichi",
+            kind: threatKind,
             declared_turn: threatTurn,
             discards: parseTilesString(threatDiscards),
             discards_after_threat: parseTilesString(threatAfter),
           },
         ],
       });
-      setResults([r]);
-    } catch (e: any) {
-      setErr(e.message ?? String(e));
-      setResults([]);
+      setManualResult(r);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setManualResult(null);
     } finally {
       setBusy(false);
     }
   }
 
-  async function runTenhou() {
+  async function runTenhou(logText?: string) {
     setBusy(true);
     setErr(null);
     try {
-      const parsed = JSON.parse(logJson);
+      const text = logText ?? logJson;
+      const parsed = JSON.parse(text);
       const r = await reviewTenhou(parsed, heroSeat);
-      setResults(r.decisions);
-    } catch (e: any) {
-      setErr(e.message ?? String(e));
-      setResults([]);
+      setTenhouDecisions(r.decisions);
+      setTenhouSummary(r.summary);
+      setDecisionIdx(0);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setTenhouDecisions([]);
+      setTenhouSummary(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadSample() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/sample/riichi_defense_demo.json");
+      if (!r.ok) throw new Error(`fetch sample failed: ${r.status}`);
+      const text = await r.text();
+      setLogJson(text);
+      await runTenhou(text);
+    } catch (e: unknown) {
+      // network fetch may fail in static export; fall back to embedded sample
+      setErr(
+        "找不到範例檔 (可能後端未啟動或 public/ 未提供)；請手動貼入牌譜 JSON。"
+      );
     } finally {
       setBusy(false);
     }
@@ -152,8 +189,8 @@ export default function Page() {
       </div>
 
       {tab === "manual" ? (
-        <div className="grid md:grid-cols-[1fr_auto] gap-4 items-start">
-          <div className="space-y-3 bg-stone-800 rounded-lg p-4">
+        <>
+          <div className="space-y-3 bg-stone-800 rounded-lg p-4 mb-4">
             <Field label="手牌 (14 張)">
               <input
                 value={hand}
@@ -182,7 +219,7 @@ export default function Page() {
               />
             </Field>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <Field label="現在巡目">
                 <input
                   type="number"
@@ -209,9 +246,22 @@ export default function Page() {
                   className={inputCls}
                 />
               </Field>
+              <Field label="威脅類型">
+                <select
+                  value={threatKind}
+                  onChange={(e) =>
+                    setThreatKind(e.target.value as typeof threatKind)
+                  }
+                  className={inputCls}
+                >
+                  <option value="riichi">立直</option>
+                  <option value="dama_tenpai">默聽</option>
+                  <option value="iishanten">一向聽</option>
+                </select>
+              </Field>
             </div>
 
-            <Field label="威脅者立直巡目">
+            <Field label="威脅者立直 / 聽牌巡目">
               <input
                 type="number"
                 value={threatTurn}
@@ -220,7 +270,7 @@ export default function Page() {
               />
             </Field>
 
-            <Field label="威脅者全部河牌 (立直前 + 後，空白分隔)">
+            <Field label="威脅者全部河牌 (含立直前後，空白分隔)">
               <input
                 value={threatDiscards}
                 onChange={(e) => setThreatDiscards(e.target.value)}
@@ -229,7 +279,7 @@ export default function Page() {
               />
             </Field>
 
-            <Field label="威脅者立直後的河牌">
+            <Field label="威脅者立直/聽牌後的河牌">
               <input
                 value={threatAfter}
                 onChange={(e) => setThreatAfter(e.target.value)}
@@ -238,7 +288,7 @@ export default function Page() {
               />
             </Field>
 
-            <Field label="其他可見牌 (其他人的河 + 寶牌指示)">
+            <Field label="其他可見牌 (其他家的河 + 寶牌指示)">
               <input
                 value={visibleExtra}
                 onChange={(e) => setVisibleExtra(e.target.value)}
@@ -246,6 +296,15 @@ export default function Page() {
                 placeholder="9p 2s"
               />
             </Field>
+
+            <label className="flex items-center gap-2 text-xs text-stone-400">
+              <input
+                type="checkbox"
+                checked={isDealer}
+                onChange={(e) => setIsDealer(e.target.checked)}
+              />
+              我是親家 (莊)
+            </label>
 
             <button
               onClick={runManual}
@@ -255,10 +314,25 @@ export default function Page() {
               {busy ? "分析中…" : "分析這手牌"}
             </button>
           </div>
-        </div>
+
+          {err && <ErrorBox message={err} />}
+          {manualResult && <ReviewCard review={manualResult} />}
+        </>
       ) : (
-        <div className="space-y-3 bg-stone-800 rounded-lg p-4">
-          <Field label="天鳳 JSON 牌譜 (整個對局)">
+        <>
+          <div className="space-y-3 bg-stone-800 rounded-lg p-4 mb-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-stone-300">
+                天鳳 JSON 牌譜 (整個對局)
+              </span>
+              <button
+                onClick={loadSample}
+                disabled={busy}
+                className="text-xs text-emerald-400 hover:text-emerald-300 underline disabled:opacity-50"
+              >
+                載入範例牌譜
+              </button>
+            </div>
             <textarea
               value={logJson}
               onChange={(e) => setLogJson(e.target.value)}
@@ -266,46 +340,54 @@ export default function Page() {
               className={`${inputCls} font-mono text-xs`}
               placeholder='{"title": [...], "log": [...]}'
             />
-          </Field>
-          <Field label="你的座位 (0=東家)">
-            <input
-              type="number"
-              min={0}
-              max={3}
-              value={heroSeat}
-              onChange={(e) => setHeroSeat(Number(e.target.value))}
-              className={inputCls}
+            <Field label="你的座位 (0=東家, 1=南家, 2=西家, 3=北家)">
+              <input
+                type="number"
+                min={0}
+                max={3}
+                value={heroSeat}
+                onChange={(e) => setHeroSeat(Number(e.target.value))}
+                className={inputCls}
+              />
+            </Field>
+            <button
+              onClick={() => runTenhou()}
+              disabled={busy || !logJson.trim()}
+              className="w-full mt-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 rounded font-semibold"
+            >
+              {busy ? "分析中…" : "解析並逐手點評"}
+            </button>
+            <p className="text-xs text-stone-500">
+              MVP 解析器處理標準摸打與多數鳴牌情境。雀魂牌譜請先轉成天鳳格式。
+            </p>
+          </div>
+
+          {err && <ErrorBox message={err} />}
+          {tenhouSummary && (
+            <GameSummaryCard
+              summary={tenhouSummary}
+              onJumpToWorst={
+                tenhouSummary.biggest_blunder_index !== null
+                  ? () => setDecisionIdx(tenhouSummary.biggest_blunder_index!)
+                  : undefined
+              }
             />
-          </Field>
-          <button
-            onClick={runTenhou}
-            disabled={busy}
-            className="w-full mt-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 rounded font-semibold"
-          >
-            {busy ? "分析中…" : "解析並逐手點評"}
-          </button>
-          <p className="text-xs text-stone-500">
-            注意：MVP 解析器僅處理標準摸打流程，遇到複雜的鳴牌組合可能跳過。雀魂牌譜請先轉成天鳳格式。
-          </p>
-        </div>
+          )}
+          {tenhouDecisions.length > 0 && (
+            <DecisionNavigator
+              decisions={tenhouDecisions}
+              index={decisionIdx}
+              onIndexChange={setDecisionIdx}
+            />
+          )}
+        </>
       )}
 
-      {err && (
-        <div className="mt-4 bg-red-900/40 border border-red-700 text-red-200 p-3 rounded">
-          {err}
-        </div>
+      {tab === "manual" && !busy && !manualResult && !err && (
+        <p className="text-sm text-stone-500 text-center mt-8">
+          預設範例已填好，按下「分析這手牌」即可看效果。
+        </p>
       )}
-
-      <div className="mt-6 space-y-4">
-        {results.map((r, i) => (
-          <ReviewCard key={i} review={r} />
-        ))}
-        {!busy && results.length === 0 && !err && (
-          <p className="text-sm text-stone-500 text-center mt-8">
-            預設範例已填好，按下「分析這手牌」即可看效果。
-          </p>
-        )}
-      </div>
     </main>
   );
 }
@@ -325,5 +407,13 @@ function Field({
       <span className="block text-xs text-stone-400 mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div className="mb-4 bg-red-900/40 border border-red-700 text-red-200 p-3 rounded text-sm">
+      {message}
+    </div>
   );
 }
