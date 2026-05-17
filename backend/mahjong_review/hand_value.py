@@ -1,17 +1,18 @@
 """Quick yaku detection for hand value estimation.
 
-This is *not* a full yaku scorer — that requires knowing wait shape, agari tile,
-and fu. We need an estimate of likely final han for EV computations, so we look
-for yaku that are likely or guaranteed given the current shape:
+Not a full scorer — proper yaku requires knowing wait shape + agari tile + fu.
+We need a *probabilistic* han estimate to plug into EV calculations, so we:
 
-- riichi (+1)       — if hand is closed and likely to reach tenpai
-- tsumo (+1)        — if closed (always available on tsumo)
-- yakuhai (+1 each) — pair or triplet of dragons / round wind / seat wind
-- tanyao (+1)       — if no yaochuu tiles
-- pinfu hint (+1)   — closed, no triplets, mostly runs
-- dora              — passed in as count
+- Add deterministic han for guaranteed yaku (riichi for closed hands, yakuhai
+  triplets, tanyao when no yaochuu, dora)
+- Add fractional han for likely-but-uncertain yaku (yakuhai pair → +0.4,
+  tsumo bonus on closed hand → +0.25)
+- Round up at the end (mahjong han are integers; EV cares about points,
+  not ranks, so rounding up gives a slightly optimistic but not unreasonable
+  picture)
 
-Output: estimated final han (current visible + 1 luck buffer).
+A reader can still see the deterministic vs fractional decomposition in the
+returned tag list.
 """
 
 from __future__ import annotations
@@ -31,59 +32,54 @@ def quick_yaku_han(
     """Estimate final han + tags. Returns (han, list_of_yaku_labels)."""
     closed = melds_count == 0
     counts = tile_counts(hand)
-    han = 0
+    han_int = 0
+    han_frac = 0.0
     tags: list[str] = []
 
-    # riichi (and tsumo bonus expected)
+    # riichi
     if closed and likely_to_riichi:
-        han += 1
+        han_int += 1
         tags.append("立直")
-        # tsumo expected with ~25% odds — fold into expected value
-        han += 0  # not added deterministically; expected via win_prob path
+        # tsumo: ~25% of wins are tsumo for closed hands, adds 1 han
+        han_frac += 0.25
+        tags.append("+0.25 (tsumo 期望)")
 
     # yakuhai
-    yakuhai_tids = {31, 32, 33}  # haku, hatsu, chun
+    yakuhai_tids = {31, 32, 33}  # haku/hatsu/chun
     if round_wind_tid in HONORS:
         yakuhai_tids.add(round_wind_tid)
     if seat_wind_tid in HONORS:
         yakuhai_tids.add(seat_wind_tid)
     for tid in yakuhai_tids:
         if counts[tid] >= 3:
-            han += 1
+            han_int += 1
             tags.append(f"役牌×3 ({_honor_name(tid)})")
         elif counts[tid] == 2:
-            # pair could become triplet; ~30% likely if early
-            # don't add full han, but bias by 0.5 → round up
-            pass
+            han_frac += 0.4
+            tags.append(f"+0.4 (役牌候補 {_honor_name(tid)} 對子)")
 
-    # tanyao: no yaochuu (terminals + honors)
+    # tanyao
     yaochuu = set(HONORS) | {0, 8, 9, 17, 18, 26}
-    has_yaochuu = any(counts[t] > 0 for t in yaochuu)
-    if not has_yaochuu:
-        han += 1
+    if not any(counts[t] > 0 for t in yaochuu):
+        han_int += 1
         tags.append("斷么")
 
-    # all-simples-leaning: only 1-2 yaochuu and many middles — soft hint, no han added
-
-    # pinfu hint: all runs + pair not yakuhai + ryanmen wait. We can't know wait shape,
-    # so a very loose check: closed, no triplets in hand, plenty of consecutive runs.
-    if closed:
-        triplets = sum(1 for c in counts if c >= 3)
-        if triplets == 0:
-            # high chance of pinfu; conservative +1 only if we already have a defined shape
-            # (i.e. shanten 0 or 1 — caller can decide)
-            pass  # leave to caller
-
-    han += dora_count
+    # dora
+    han_int += dora_count
     if dora_count > 0:
         tags.append(f"寶牌 ×{dora_count}")
 
-    # baseline: every hand needs at least 1 han to win. If we estimated 0, bump to 1.
-    if han == 0:
-        han = 1
+    total = han_int + han_frac
+    # if we have NO yaku at all on a closed hand, riichi covers it (already counted).
+    # for an open hand with no yaku, the win is impossible — represent as worst case 1 han
+    # so EV isn't zero (player may finish their hand by drawing a yakuhai).
+    if total < 1:
+        total = 1.0
         tags.append("(假設至少 1 翻)")
 
-    return han, tags
+    # round up so the integer-han point table maps sensibly
+    rounded = int(total) if total == int(total) else int(total) + 1
+    return rounded, tags
 
 
 def _honor_name(tid: int) -> str:

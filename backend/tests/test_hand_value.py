@@ -30,3 +30,19 @@ def test_dora_adds_han():
     han2, tags = quick_yaku_han(hand, dora_count=2)
     assert han2 == han0 + 2
     assert any("寶牌" in t for t in tags)
+
+
+def test_tsumo_expectation_tag_on_closed_hand():
+    hand = tiles_from_str("234m 456p 678s 234s 55p")
+    _, tags = quick_yaku_han(hand, likely_to_riichi=True)
+    assert any("tsumo" in t for t in tags)
+
+
+def test_yakuhai_pair_partial_credit():
+    # one haku pair, otherwise nondescript closed hand
+    hand = tiles_from_str("123m 456p 78s 55z 234m")
+    han_with, tags = quick_yaku_han(hand, likely_to_riichi=True)
+    # pair only — not a guaranteed +1 han, but should appear as a candidate tag
+    assert any("候補" in t and "白" in t for t in tags)
+    # value is at least riichi (1) and rounded up with fractional → 2
+    assert han_with >= 2

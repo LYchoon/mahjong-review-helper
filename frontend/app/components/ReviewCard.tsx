@@ -1,6 +1,8 @@
 "use client";
 
 import type { Alternative, DecisionReview } from "@/lib/api";
+import { DangerBar, EVBar } from "./DangerBar";
+import { HandSafetyView } from "./HandSafety";
 import { LabelBadge } from "./LabelBadge";
 import { Tile } from "./Tile";
 
@@ -44,7 +46,13 @@ function AlternativeRow({
             </span>
           )}
         </div>
-        <div className="text-[11px] text-stone-400">
+        <div className="mt-1 grid grid-cols-[3rem_1fr] gap-x-2 items-center">
+          <span className="text-[10px] text-stone-500">危險</span>
+          <DangerBar score={alt.danger} />
+          <span className="text-[10px] text-stone-500">押EV</span>
+          <EVBar value={alt.push_ev} />
+        </div>
+        <div className="text-[11px] text-stone-400 mt-1">
           押期望 {alt.push_ev >= 0 ? "+" : ""}
           {alt.push_ev} · 和率 {(alt.win_prob * 100).toFixed(1)}% · 估{alt.han_estimate}翻
         </div>
@@ -90,7 +98,7 @@ function ChoicePanel({
       <div className={`text-xs font-semibold mb-2 ${titleClass}`}>{title}</div>
       <div className="flex items-center gap-3 mb-2">
         <Tile notation={alt.tile} size="md" highlight={variant} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className={`font-mono ${dangerColor(alt.danger)}`}>
             危險 {alt.danger} · {alt.verdict}
           </div>
@@ -103,20 +111,26 @@ function ChoicePanel({
             {alt.ukeire > 0 && ` · 進張 ${alt.ukeire} 枚`}
             {` · 殘餘安全牌 ${alt.future_safe_tiles}`}
           </div>
-          {alt.yaku_tags.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {alt.yaku_tags.map((tag, i) => (
-                <span
-                  key={i}
-                  className="px-1.5 py-0.5 rounded text-[10px] bg-amber-900/40 text-amber-200"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       </div>
+      <div className="grid grid-cols-[3rem_1fr] gap-x-2 items-center mb-1">
+        <span className="text-[10px] text-stone-500">危險</span>
+        <DangerBar score={alt.danger} height="h-2" />
+        <span className="text-[10px] text-stone-500">押EV</span>
+        <EVBar value={pushEv} height="h-2" />
+      </div>
+      {alt.yaku_tags.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {alt.yaku_tags.map((tag, i) => (
+            <span
+              key={i}
+              className="px-1.5 py-0.5 rounded text-[10px] bg-amber-900/40 text-amber-200"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
       <ul className="text-xs text-stone-300 space-y-0.5">
         {reasons.map((r, i) => (
           <li key={i}>· {r}</li>
@@ -156,6 +170,12 @@ export function ReviewCard({ review }: { review: DecisionReview }) {
           variant="recommend"
         />
       </div>
+
+      <HandSafetyView
+        alternatives={review.alternatives}
+        chosenTile={review.your_choice.tile}
+        recommendedTile={review.recommendation.tile}
+      />
 
       <details className="bg-stone-900 rounded p-3">
         <summary className="text-xs text-stone-400 cursor-pointer select-none">
