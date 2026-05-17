@@ -22,6 +22,7 @@ from .danger import (
     DangerAssessment,
     DangerFactor,
     Threat,
+    ThreatKind,
     assess_tile,
 )
 from .ev import HandValue, PushFoldDecision, estimate_hand_value, evaluate_push
@@ -85,19 +86,21 @@ def review_decision(
     if len(hero.hand) not in (13, 14):
         raise ValueError(f"hand must have 13 or 14 tiles, got {len(hero.hand)}")
 
-    threat = _pick_primary_threat(threats, hero.hand, visible_counts, hero.round_wind)
+    primary = _pick_primary_threat(threats, hero.hand, visible_counts, hero.round_wind)
 
-    # danger assessment per distinct tile
+    # danger per distinct tile: combine across all threats (1 - prod of survival probs)
     assessments_by_tid: dict[int, DangerAssessment] = {}
     for t in hero.hand:
         if t.tid in assessments_by_tid:
             continue
-        assessments_by_tid[t.tid] = assess_tile(t, threat, visible_counts, hero.round_wind)
+        assessments_by_tid[t.tid] = _combined_assessment(
+            t, threats, visible_counts, hero.round_wind
+        )
 
-    # evaluate every discard option
+    # evaluate every discard option using the primary threat for EV reference cost
     options: list[tuple[AlternativeOption, PushFoldDecision]] = []
     for asmt in assessments_by_tid.values():
-        opt, decision = _evaluate_discard_option(asmt, hero, threat, visible_counts)
+        opt, decision = _evaluate_discard_option(asmt, hero, primary, visible_counts)
         options.append((opt, decision))
 
     # rank: higher EV first; tie-break by lower danger
@@ -112,7 +115,7 @@ def review_decision(
     label = _classify(ev_gap, your_opt, best_opt)
 
     return DecisionReview(
-        situation=_describe_situation(threat, hero),
+        situation=_describe_situation(primary, hero, threats),
         your_choice=your_opt,
         your_decision=your_decision,
         recommendation=best_opt,
@@ -121,6 +124,47 @@ def review_decision(
         label=label,
         summary=_summarise(label, your_opt, best_opt, ev_gap),
     )
+
+
+def _combined_assessment(
+    tile: Tile,
+    threats: list[Threat],
+    visible_counts: list[int],
+    round_wind: int,
+) -> DangerAssessment:
+    """Combine per-threat danger using independent-deal-in approximation:
+        combined_danger = 1 - prod(1 - p_i)   (scaled to 0..100)
+    Reports factors per-threat, prefixed with which seat they came from.
+    """
+    per_threat = []
+    for th in threats:
+        a = assess_tile(tile, th, visible_counts, round_wind)
+        per_threat.append((th, a))
+    if not per_threat:
+        return assess_tile(tile, threats[0], visible_counts, round_wind)
+
+    if len(per_threat) == 1:
+        return per_threat[0][1]
+
+    survival = 1.0
+    factors: list[DangerFactor] = []
+    for th, a in per_threat:
+        survival *= 1.0 - (a.score / 100.0)
+        rel = f"P{th.player}"
+        for f in a.factors:
+            factors.append(
+                DangerFactor(
+                    code=f"{f.code}_{rel}",
+                    label=f"[{rel}] {f.label}",
+                    delta=f.delta,
+                )
+            )
+    combined = max(0.0, min(100.0, (1.0 - survival) * 100.0))
+    factors.insert(
+        0,
+        DangerFactor("MULTI_THREAT", f"多家威脅合計 ({len(per_threat)} 家)", 0.0),
+    )
+    return DangerAssessment(tile, combined, factors)
 
 
 def _pick_primary_threat(
@@ -232,15 +276,25 @@ def _classify(ev_gap: float, your_opt: AlternativeOption, best_opt: AlternativeO
     return "blunder"
 
 
-def _describe_situation(threat: Threat, hero: HeroState) -> str:
-    rel = (threat.player - hero.seat) % 4
-    rel_name = {1: "下家", 2: "對家", 3: "上家"}.get(rel, "自家(?)")
-    kind = {
-        "riichi": "立直",
-        "dama_tenpai": "默聽嫌疑",
-        "iishanten": "一向聽威脅",
-    }[threat.kind.value]
-    return f"第 {hero.turn} 巡，{rel_name} 已 {kind} ({hero.turn - threat.declared_turn + 1} 巡前)"
+def _describe_situation(
+    primary: Threat, hero: HeroState, all_threats: list[Threat]
+) -> str:
+    def describe(th: Threat) -> str:
+        rel = (th.player - hero.seat) % 4
+        rel_name = {1: "下家", 2: "對家", 3: "上家"}.get(rel, "自家(?)")
+        kind = {
+            "riichi": "立直",
+            "dama_tenpai": "默聽嫌疑",
+            "iishanten": "一向聽威脅",
+        }[th.kind.value]
+        ago = max(1, hero.turn - th.declared_turn + 1)
+        return f"{rel_name} {kind} ({ago} 巡前)"
+
+    parts = [f"第 {hero.turn} 巡，{describe(primary)}"]
+    if len(all_threats) > 1:
+        others = [describe(t) for t in all_threats if t is not primary]
+        parts.append(f"另有威脅: {', '.join(others)}")
+    return "；".join(parts)
 
 
 def _summarise(

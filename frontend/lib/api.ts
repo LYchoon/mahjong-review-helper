@@ -34,6 +34,7 @@ export type BoardState = {
   hero_seat: number;
   hero_hand: string[];
   discards: string[][];
+  open_melds: string[][][];
   riichi_turns: (number | null)[];
   dora_indicators: string[];
   threats: { player: number; kind: string; declared_turn: number }[];

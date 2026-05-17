@@ -91,6 +91,7 @@ class BoardStateOut(BaseModel):
     hero_seat: int
     hero_hand: list[str]
     discards: list[list[str]]  # 4 piles
+    open_melds: list[list[list[str]]]  # [seat][meld_idx][tiles]
     riichi_turns: list[int | None]
     dora_indicators: list[str]
     threats: list[dict[str, object]]
@@ -267,6 +268,9 @@ def _board_from_snapshot(snap: Snapshot) -> BoardStateOut:
         hero_seat=snap.hero_seat,
         hero_hand=[str(t) for t in snap.hero_hand],
         discards=[[str(t) for t in pile] for pile in snap.all_discards],
+        open_melds=[
+            [[str(t) for t in meld] for meld in seat] for seat in snap.open_melds
+        ],
         riichi_turns=list(snap.riichi_turns),
         dora_indicators=[str(t) for t in snap.dora_indicators],
         threats=[

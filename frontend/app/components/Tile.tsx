@@ -19,10 +19,12 @@ export function Tile({
   notation,
   size = "md",
   highlight,
+  onClick,
 }: {
   notation: string;
   size?: "sm" | "md" | "lg";
   highlight?: "danger" | "safe" | "chosen" | "recommend";
+  onClick?: () => void;
 }) {
   const rank = notation[0];
   const suit = notation[1];
@@ -49,18 +51,33 @@ export function Tile({
             : "";
 
   const rankColor = isRed ? "text-red-500" : "text-gray-900";
+  const clickableClass = onClick
+    ? "cursor-pointer hover:scale-105 transition-transform"
+    : "";
 
-  return (
-    <div
-      className={`${sizeClass} ${highlightClass} bg-stone-100 rounded-md flex flex-col items-center justify-center shadow-sm border border-stone-300 select-none`}
-      title={notation}
-    >
+  const inner = (
+    <>
       <span className={`font-bold ${rankColor} leading-tight`}>{label}</span>
       {suitLabel && (
         <span className="text-stone-700 leading-tight text-[0.8em]">
           {suitLabel}
         </span>
       )}
+    </>
+  );
+
+  const className = `${sizeClass} ${highlightClass} ${clickableClass} bg-stone-100 rounded-md flex flex-col items-center justify-center shadow-sm border border-stone-300 select-none`;
+
+  if (onClick) {
+    return (
+      <button onClick={onClick} className={className} title={notation} type="button">
+        {inner}
+      </button>
+    );
+  }
+  return (
+    <div className={className} title={notation}>
+      {inner}
     </div>
   );
 }

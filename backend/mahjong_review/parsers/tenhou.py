@@ -94,8 +94,9 @@ class Snapshot:
     visible_counts: list[int]
     threats: list[Threat]
     dora_indicators: list[Tile]
-    all_discards: list[list[Tile]] = field(default_factory=list)  # 4 piles
-    riichi_turns: list[int | None] = field(default_factory=list)  # per seat
+    all_discards: list[list[Tile]] = field(default_factory=list)
+    riichi_turns: list[int | None] = field(default_factory=list)
+    open_melds: list[list[list[Tile]]] = field(default_factory=list)  # [seat][meld_idx][tiles]
 
 
 # --- main parser ---
@@ -134,6 +135,7 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
         sorted([n for n in seat_haipai]) for seat_haipai in haipai
     ]
     melds_count = [0, 0, 0, 0]
+    open_melds: list[list[list[Tile]]] = [[] for _ in range(4)]
     discard_piles: list[list[Tile]] = [[] for _ in range(4)]
     riichi_declared_turn = [None, None, None, None]
     discards_after_riichi: list[list[Tile]] = [[] for _ in range(4)]
@@ -197,6 +199,10 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
                     bump_visible(t.tid)
                 if kind == "a":
                     melds_count[active] += 1
+                    open_melds[active].append(tiles_in_call)
+                elif kind == "k" and open_melds[active]:
+                    # extend the last pon to kan
+                    open_melds[active][-1] = open_melds[active][-1] + tiles_in_call
                 # active stays — they'll draw rinshan next iteration
                 continue
             else:
@@ -204,6 +210,7 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
                 for t in tiles_in_call:
                     bump_visible(t.tid)
                 melds_count[active] += 1
+                open_melds[active].append(tiles_in_call)
                 # active now must discard (no draw — they used the called tile)
                 if disc_ptr[active] >= len(discards[active]):
                     break
@@ -226,6 +233,7 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
                     riichi_sticks,
                     melds_count,
                     dora_inds,
+                    open_melds,
                 )
                 # active stays; if no further interceptor, next iter will find them with no pending draws
                 # and rotate via the fallback. To rotate properly:
@@ -260,6 +268,7 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
             riichi_sticks,
             melds_count,
             dora_inds,
+            open_melds,
         )
         active = (active + 1) % 4
 
@@ -285,6 +294,7 @@ def _process_discard(
     riichi_sticks: int,
     melds_count: list[int],
     dora_inds: list[Tile],
+    open_melds: list[list[list[Tile]]],
 ) -> None:
     disc_entry = discards[active][disc_ptr[active]]
     disc_ptr[active] += 1
@@ -353,6 +363,7 @@ def _process_discard(
                     dora_indicators=list(dora_inds),
                     all_discards=[list(p) for p in discard_piles],
                     riichi_turns=list(riichi_declared_turn),
+                    open_melds=[[list(m) for m in seat] for seat in open_melds],
                 )
             )
 

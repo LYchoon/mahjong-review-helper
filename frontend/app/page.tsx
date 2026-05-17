@@ -191,7 +191,7 @@ export default function Page() {
       {tab === "manual" ? (
         <>
           <div className="space-y-3 bg-stone-800 rounded-lg p-4 mb-4">
-            <Field label="手牌 (14 張)">
+            <Field label="手牌 (14 張) — 點擊牌選擇要打的">
               <input
                 value={hand}
                 onChange={(e) => setHand(e.target.value)}
@@ -205,19 +205,34 @@ export default function Page() {
                     notation={t}
                     size="sm"
                     highlight={t === chosen ? "chosen" : undefined}
+                    onClick={() => setChosen(t)}
                   />
                 ))}
               </div>
+              <div className="text-xs text-stone-400 mt-1">
+                目前選擇打:{" "}
+                <span className="font-mono text-mistake">{chosen || "(無)"}</span>
+                {" — "}
+                <button
+                  onClick={() => setChosen("")}
+                  className="text-stone-500 hover:text-stone-300 underline"
+                  type="button"
+                >
+                  或手動輸入
+                </button>
+              </div>
             </Field>
 
-            <Field label="你打出的牌">
-              <input
-                value={chosen}
-                onChange={(e) => setChosen(e.target.value)}
-                className={inputCls}
-                placeholder="5m"
-              />
-            </Field>
+            {!handTiles.includes(chosen) && (
+              <Field label="你打出的牌 (手動輸入)">
+                <input
+                  value={chosen}
+                  onChange={(e) => setChosen(e.target.value)}
+                  className={inputCls}
+                  placeholder="5m"
+                />
+              </Field>
+            )}
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <Field label="現在巡目">

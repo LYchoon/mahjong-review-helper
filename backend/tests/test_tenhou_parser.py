@@ -28,9 +28,10 @@ def test_snapshot_carries_full_visible_state():
 
 
 def test_parser_handles_call_string_in_draws():
-    """Tiny synthetic round with a chi call; verify melds_count goes up."""
-    # haipai must be 13 ints per seat; draws/discards lists can have any length.
+    """Tiny synthetic round with a chi call; verify melds_count goes up and a
+    snapshot taken after riichi includes the open meld."""
     haipai = [[11, 12, 13, 21, 22, 23, 31, 32, 33, 41, 41, 42, 42] for _ in range(4)]
+    # Seat 1 chi-calls right after seat 0's first discard, then later seat 2 riichis.
     log = {
         "title": ["test", ""],
         "name": ["a", "b", "c", "d"],
@@ -41,15 +42,17 @@ def test_parser_handles_call_string_in_draws():
                 [25000] * 4,
                 [41],
                 [],
-                haipai[0], [14], [14],
-                haipai[1], ["c111213"], [25],  # seat 1 chi-calls 111213, then discards 5p (25)
-                haipai[2], [15], [15],
-                haipai[3], [16], [16],
+                haipai[0], [14, 15, 16, 17], [14, 15, 16, 17],
+                haipai[1], ["c111213", 24, 25, 26], [27, 28, 29, 32],
+                haipai[2], [33, 34, 35, 36], [f"r{33}", 34, 35, 36],
+                haipai[3], [37, 38, 39, 41], [37, 38, 39, 41],
                 ["流局", [0, 0, 0, 0]],
             ]
         ],
     }
-    # parsing should not raise even though hero (seat 0) has no riichi threats yet
     snaps = parse_tenhou_log(log, hero_seat=0)
-    # no riichi → no defense snapshots
-    assert snaps == []
+    # snapshots will exist after seat 2's riichi
+    assert len(snaps) >= 1
+    # the called meld for seat 1 should be tracked
+    last = snaps[-1]
+    assert any(len(seat_melds) > 0 for seat_melds in last.open_melds)

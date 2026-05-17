@@ -8,6 +8,7 @@ type BoardState = {
   hero_seat: number;
   hero_hand: string[];
   discards: string[][];
+  open_melds: string[][][];
   riichi_turns: (number | null)[];
   dora_indicators: string[];
   threats: { player: number; kind: string; declared_turn: number }[];
@@ -17,12 +18,14 @@ const SEAT_NAME = ["東", "南", "西", "北"];
 
 function DiscardPile({
   tiles,
+  melds,
   riichiTurn,
   label,
   isHero,
   isThreat,
 }: {
   tiles: string[];
+  melds: string[][];
   riichiTurn: number | null;
   label: string;
   isHero: boolean;
@@ -56,6 +59,18 @@ function DiscardPile({
           </span>
         )}
       </div>
+      {melds.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1 p-1 bg-stone-950 rounded">
+          <span className="text-[9px] text-stone-500 self-center">副露:</span>
+          {melds.map((meld, mi) => (
+            <div key={mi} className="flex gap-0.5">
+              {meld.map((t, ti) => (
+                <Tile key={ti} notation={t} size="sm" />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-6 gap-0.5 min-h-[60px]">
         {tiles.map((t, i) => {
           const afterRiichi =
@@ -94,6 +109,7 @@ export function BoardStateView({ board }: { board: BoardState }) {
           <DiscardPile
             key={seat}
             tiles={board.discards[seat] ?? []}
+            melds={board.open_melds[seat] ?? []}
             riichiTurn={board.riichi_turns[seat]}
             label={`${SEAT_NAME[seat]} (座 ${seat})${seat === board.hero_seat ? " — 你" : ""}`}
             isHero={seat === board.hero_seat}
