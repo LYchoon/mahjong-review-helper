@@ -80,6 +80,7 @@ class AlternativeOut(BaseModel):
     factors: list[FactorOut]
     shanten_after: int
     ukeire: int
+    effective_tiles: list[str]
     future_safe_tiles: int
     han_estimate: int
     yaku_tags: list[str]
@@ -308,6 +309,7 @@ def _serialize_review(r: DecisionReview) -> DecisionReviewOut:
             factors=[FactorOut(code=f.code, label=f.label, delta=f.delta) for f in a.factors],
             shanten_after=a.shanten_after,
             ukeire=a.ukeire,
+            effective_tiles=[str(Tile(tid)) for tid in a.effective_tile_ids],
             future_safe_tiles=a.future_safe_tiles,
             han_estimate=a.han_estimate,
             yaku_tags=a.yaku_tags,

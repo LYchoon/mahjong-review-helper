@@ -131,6 +131,18 @@ function ChoicePanel({
           ))}
         </div>
       )}
+      {alt.effective_tiles.length > 0 && (
+        <div className="mb-2">
+          <div className="text-[10px] text-stone-500 mb-1">
+            切後有效進張 ({alt.ukeire} 枚):
+          </div>
+          <div className="flex flex-wrap gap-0.5">
+            {alt.effective_tiles.map((t, i) => (
+              <Tile key={i} notation={t} size="sm" />
+            ))}
+          </div>
+        </div>
+      )}
       <ul className="text-xs text-stone-300 space-y-0.5">
         {reasons.map((r, i) => (
           <li key={i}>· {r}</li>

@@ -59,6 +59,7 @@ class AlternativeOption:
     factors: list[DangerFactor]
     shanten_after: int  # shanten of the hand after this discard
     ukeire: int  # remaining useful tiles to advance (0 if win/no progress)
+    effective_tile_ids: list[int]  # tile ids that advance the hand after this discard
     future_safe_tiles: int  # how many tiles still ≤30 danger left in hand
     han_estimate: int
     yaku_tags: list[str]
@@ -197,8 +198,10 @@ def _evaluate_discard_option(
     # ukeire: useful tiles to advance, counting only what's still unseen
     if sh >= 0 and len(after_hand) == 13 - 3 * hero.melds_count:
         eff = effective_tiles(after_hand, hero.melds_count)
+        effective_ids = [t for t in eff if (4 - visible_counts[t]) > 0]
         ukeire = sum(max(0, 4 - visible_counts[t]) for t in eff)
     else:
+        effective_ids = []
         ukeire = 0
 
     # yaku & value
@@ -242,6 +245,7 @@ def _evaluate_discard_option(
         factors=assessment.factors,
         shanten_after=sh,
         ukeire=ukeire,
+        effective_tile_ids=effective_ids,
         future_safe_tiles=future_safe,
         han_estimate=han_est,
         yaku_tags=tags,

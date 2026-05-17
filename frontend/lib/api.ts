@@ -16,6 +16,7 @@ export type Alternative = {
   factors: Factor[];
   shanten_after: number;
   ukeire: number;
+  effective_tiles: string[];
   future_safe_tiles: number;
   han_estimate: number;
   yaku_tags: string[];

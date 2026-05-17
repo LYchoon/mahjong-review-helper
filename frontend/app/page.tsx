@@ -50,29 +50,117 @@ function parseTilesString(s: string): string[] {
 
 type Tab = "manual" | "tenhou";
 
+const STORAGE_KEY = "mahjong-review-manual-form-v1";
+
+function loadStored<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+type ManualFormState = {
+  hand: string;
+  chosen: string;
+  turn: number;
+  threatPlayer: number;
+  threatTurn: number;
+  threatKind: "riichi" | "dama_tenpai" | "iishanten";
+  threatDiscards: string;
+  threatAfter: string;
+  visibleExtra: string;
+  doraCount: number;
+  isDealer: boolean;
+};
+
+const DEFAULT_FORM: ManualFormState = {
+  hand: SAMPLE.hand,
+  chosen: SAMPLE.chosen_discard,
+  turn: SAMPLE.turn ?? 6,
+  threatPlayer: 1,
+  threatTurn: 5,
+  threatKind: "riichi",
+  threatDiscards: SAMPLE.threats[0].discards.join(" "),
+  threatAfter: SAMPLE.threats[0].discards_after_threat.join(" "),
+  visibleExtra: SAMPLE.visible_tiles ?? "",
+  doraCount: 0,
+  isDealer: false,
+};
+
 export default function Page() {
   const [tab, setTab] = useState<Tab>("manual");
 
-  // manual form state
-  const [hand, setHand] = useState(SAMPLE.hand);
-  const [chosen, setChosen] = useState(SAMPLE.chosen_discard);
-  const [turn, setTurn] = useState(SAMPLE.turn ?? 6);
-  const [threatPlayer, setThreatPlayer] = useState(1);
-  const [threatTurn, setThreatTurn] = useState(5);
-  const [threatKind, setThreatKind] = useState<"riichi" | "dama_tenpai" | "iishanten">(
-    "riichi"
+  // manual form state — hydrated from localStorage on mount
+  const [hand, setHand] = useState(DEFAULT_FORM.hand);
+  const [chosen, setChosen] = useState(DEFAULT_FORM.chosen);
+  const [turn, setTurn] = useState(DEFAULT_FORM.turn);
+  const [threatPlayer, setThreatPlayer] = useState(DEFAULT_FORM.threatPlayer);
+  const [threatTurn, setThreatTurn] = useState(DEFAULT_FORM.threatTurn);
+  const [threatKind, setThreatKind] = useState<ManualFormState["threatKind"]>(
+    DEFAULT_FORM.threatKind
   );
-  const [threatDiscards, setThreatDiscards] = useState(
-    SAMPLE.threats[0].discards.join(" ")
-  );
-  const [threatAfter, setThreatAfter] = useState(
-    SAMPLE.threats[0].discards_after_threat.join(" ")
-  );
-  const [visibleExtra, setVisibleExtra] = useState(SAMPLE.visible_tiles ?? "");
-  const [doraCount, setDoraCount] = useState(0);
-  const [isDealer, setIsDealer] = useState(false);
+  const [threatDiscards, setThreatDiscards] = useState(DEFAULT_FORM.threatDiscards);
+  const [threatAfter, setThreatAfter] = useState(DEFAULT_FORM.threatAfter);
+  const [visibleExtra, setVisibleExtra] = useState(DEFAULT_FORM.visibleExtra);
+  const [doraCount, setDoraCount] = useState(DEFAULT_FORM.doraCount);
+  const [isDealer, setIsDealer] = useState(DEFAULT_FORM.isDealer);
 
   const [manualResult, setManualResult] = useState<DecisionReview | null>(null);
+
+  // hydrate from localStorage once on mount
+  useEffect(() => {
+    const stored = loadStored<Partial<ManualFormState>>(STORAGE_KEY, {});
+    if (stored.hand !== undefined) setHand(stored.hand);
+    if (stored.chosen !== undefined) setChosen(stored.chosen);
+    if (stored.turn !== undefined) setTurn(stored.turn);
+    if (stored.threatPlayer !== undefined) setThreatPlayer(stored.threatPlayer);
+    if (stored.threatTurn !== undefined) setThreatTurn(stored.threatTurn);
+    if (stored.threatKind !== undefined) setThreatKind(stored.threatKind);
+    if (stored.threatDiscards !== undefined)
+      setThreatDiscards(stored.threatDiscards);
+    if (stored.threatAfter !== undefined) setThreatAfter(stored.threatAfter);
+    if (stored.visibleExtra !== undefined) setVisibleExtra(stored.visibleExtra);
+    if (stored.doraCount !== undefined) setDoraCount(stored.doraCount);
+    if (stored.isDealer !== undefined) setIsDealer(stored.isDealer);
+  }, []);
+
+  // persist on change
+  useEffect(() => {
+    const state: ManualFormState = {
+      hand,
+      chosen,
+      turn,
+      threatPlayer,
+      threatTurn,
+      threatKind,
+      threatDiscards,
+      threatAfter,
+      visibleExtra,
+      doraCount,
+      isDealer,
+    };
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // localStorage may be unavailable; ignore
+    }
+  }, [
+    hand,
+    chosen,
+    turn,
+    threatPlayer,
+    threatTurn,
+    threatKind,
+    threatDiscards,
+    threatAfter,
+    visibleExtra,
+    doraCount,
+    isDealer,
+  ]);
 
   // tenhou state
   const [logJson, setLogJson] = useState("");
