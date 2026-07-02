@@ -6,9 +6,11 @@ import {
   detectLogFormat,
   reviewMajsoul,
   reviewTenhou,
+  type CallReview,
   type DecisionReview,
   type GameSummary,
 } from "@/lib/api";
+import { CallReviews } from "./CallReviews";
 import { DecisionNavigator } from "./DecisionNavigator";
 import { ErrorBox, Field, inputCls } from "./forms";
 import { GameSummaryCard } from "./GameSummary";
@@ -17,6 +19,7 @@ export function LogReviewTab() {
   const [logJson, setLogJson] = useState("");
   const [heroSeat, setHeroSeat] = useState(0);
   const [decisions, setDecisions] = useState<DecisionReview[]>([]);
+  const [calls, setCalls] = useState<CallReview[]>([]);
   const [summary, setSummary] = useState<GameSummary | null>(null);
   const [decisionIdx, setDecisionIdx] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -44,11 +47,13 @@ export function LogReviewTab() {
       const review = format === "tenhou" ? reviewTenhou : reviewMajsoul;
       const r = await review(parsed, heroSeat);
       setDecisions(r.decisions);
+      setCalls(r.calls ?? []);
       setSummary(r.summary);
       setDecisionIdx(0);
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e));
       setDecisions([]);
+      setCalls([]);
       setSummary(null);
     } finally {
       setBusy(false);
@@ -131,6 +136,7 @@ export function LogReviewTab() {
           }
         />
       )}
+      <CallReviews calls={calls} />
       {decisions.length > 0 && (
         <DecisionNavigator
           decisions={decisions}

@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 
-import type { Alternative, DecisionReview } from "@/lib/api";
+import type { Alternative, DecisionReview, RiichiAdvice } from "@/lib/api";
 import { helpFor } from "@/lib/factorHelp";
 import { dangerTextClass, shantenLabel } from "@/lib/severity";
 import { DangerBar, EVBar } from "./DangerBar";
@@ -195,6 +195,8 @@ export const ReviewCard = memo(function ReviewCard({
         />
       </div>
 
+      {review.riichi && <RiichiPanel advice={review.riichi} />}
+
       <HandSafetyView
         alternatives={review.alternatives}
         chosenTile={review.your_choice.tile}
@@ -224,3 +226,32 @@ export const ReviewCard = memo(function ReviewCard({
     </div>
   );
 });
+
+function RiichiPanel({ advice }: { advice: RiichiAdvice }) {
+  const agree = advice.declared === advice.recommended;
+  return (
+    <div
+      className={`rounded p-3 border ${
+        agree
+          ? "bg-emerald-950/40 border-emerald-800"
+          : "bg-amber-950/40 border-amber-700"
+      }`}
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold mb-1">
+        <span className="px-1.5 py-0.5 rounded bg-yellow-500 text-black text-[10px]">
+          立直判斷
+        </span>
+        <span className={agree ? "text-emerald-300" : "text-amber-300"}>
+          你{advice.declared ? "立直了" : "選擇不立直"} · 建議
+          {advice.recommended ? "立直" : "默聽"}
+          {agree ? " — 一致" : ""}
+        </span>
+      </div>
+      <ul className="text-xs text-stone-300 space-y-0.5">
+        {advice.reasons.map((r, i) => (
+          <li key={i}>· {r}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}

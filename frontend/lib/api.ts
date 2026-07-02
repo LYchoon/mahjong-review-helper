@@ -43,11 +43,31 @@ export type BoardState = {
 
 export type DecisionType = "defense" | "efficiency";
 
+export type RiichiAdvice = {
+  declared: boolean;
+  recommended: boolean;
+  reasons: string[];
+};
+
+export type CallReview = {
+  round_label: string;
+  turn: number;
+  tile: string;
+  kind: "pon" | "chi";
+  actual: "called" | "passed";
+  recommended: "call" | "pass";
+  label: DecisionLabel;
+  reasons: string[];
+  shanten_before: number;
+  shanten_after: number;
+};
+
 export type DecisionReview = {
   situation: string;
   label: DecisionLabel;
   summary: string;
   decision_type: DecisionType;
+  riichi: RiichiAdvice | null;
   your_choice: Alternative;
   recommendation: Alternative;
   alternatives: Alternative[];
@@ -78,6 +98,7 @@ export type LogReviewResult = {
   hero_seat: number;
   decisions: DecisionReview[];
   summary: GameSummary;
+  calls: CallReview[];
 };
 
 export type ManualReviewRequest = {
