@@ -46,9 +46,9 @@ from pathlib import Path
 from typing import Any
 
 from ..tiles import Tile
-from .common import Snapshot, build_threats
+from .common import CallOpportunity, ParseResult, Snapshot, build_threats
 
-__all__ = ["Snapshot", "parse_tenhou_log", "parse_tenhou_file"]
+__all__ = ["Snapshot", "parse_tenhou_log", "parse_tenhou_log_full", "parse_tenhou_file"]
 
 # --- tile id conversion ---
 
@@ -84,19 +84,29 @@ def parse_tenhou_log(raw: str | dict[str, Any], hero_seat: int) -> list[Snapshot
     Emits a snapshot for every hero discard; `Snapshot.threats` is empty when no
     opponent threat exists (the analyser then runs an efficiency review).
     """
+    return parse_tenhou_log_full(raw, hero_seat).snapshots
+
+
+def parse_tenhou_log_full(raw: str | dict[str, Any], hero_seat: int) -> ParseResult:
+    """Like parse_tenhou_log but also returns the hero's call opportunities
+    (pon/chi chances on opponent discards, with whether they were taken)."""
     data = json.loads(raw) if isinstance(raw, str) else raw
     log = data.get("log", [])
-    out: list[Snapshot] = []
+    result = ParseResult(snapshots=[], call_opportunities=[])
     for round_idx, rnd in enumerate(log):
-        out.extend(_parse_round(rnd, round_idx, hero_seat))
-    return out
+        snaps, opps = _parse_round(rnd, round_idx, hero_seat)
+        result.snapshots.extend(snaps)
+        result.call_opportunities.extend(opps)
+    return result
 
 
 def parse_tenhou_file(path: str | Path, hero_seat: int) -> list[Snapshot]:
     return parse_tenhou_log(Path(path).read_text(), hero_seat)
 
 
-def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapshot]:
+def _parse_round(
+    rnd: list[Any], round_idx: int, hero_seat: int
+) -> tuple[list[Snapshot], list[CallOpportunity]]:
     round_info = rnd[0]
     round_number, honba, riichi_sticks = round_info[0], round_info[1], round_info[2]
     round_wind = 27 + (round_number // 4)  # 0..3 = E1..E4; 4..7 = S1..S4
@@ -125,6 +135,7 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
             visible_counts[_decode_tenhou_tile(n).tid] += 1
 
     snaps: list[Snapshot] = []
+    opportunities: list[CallOpportunity] = []
     turn_counter = [0, 0, 0, 0]
     draw_ptr = [0, 0, 0, 0]
     disc_ptr = [0, 0, 0, 0]
@@ -205,6 +216,9 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
                 melds_count,
                 dora_inds,
                 open_melds,
+                draws,
+                draw_ptr,
+                opportunities,
             )
             active = (active + 1) % 4
             continue
@@ -239,11 +253,14 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
             melds_count,
             dora_inds,
             open_melds,
+            draws,
+            draw_ptr,
+            opportunities,
         )
         if rotate:
             active = (active + 1) % 4
 
-    return snaps
+    return snaps, opportunities
 
 
 def _process_discard(
@@ -267,6 +284,9 @@ def _process_discard(
     melds_count: list[int],
     dora_inds: list[Tile],
     open_melds: list[list[list[Tile]]],
+    draws: list[list[Any]],
+    draw_ptr: list[int],
+    opportunities: list[CallOpportunity],
 ) -> bool:
     """Consume one discard-slot entry. Returns True if the turn should rotate to
     the next player, False if the same player acts again (kan → rinshan draw)."""
@@ -321,18 +341,21 @@ def _process_discard(
     if riichi_declared_turn[active] is not None:
         discards_after_riichi[active].append(discarded)
 
-    # snapshot before mutating hero's hand
+    # snapshot before mutating hero's hand. Discards made while the hero is
+    # already in riichi are forced tsumogiri — not decisions — so skip those
+    # (the riichi declaration discard itself IS reviewed).
     if active == hero_seat:
-        threats = build_threats(
-            hero_seat,
-            discard_piles,
-            discards_after_riichi,
-            riichi_declared_turn,
-            melds_count,
-            dora_inds,
-            open_melds,
-        )
-        if drawn_code is not None:
+        already_riichi = riichi_declared_turn[hero_seat] is not None and not riichi_now
+        if drawn_code is not None and not already_riichi:
+            threats = build_threats(
+                hero_seat,
+                discard_piles,
+                discards_after_riichi,
+                riichi_declared_turn,
+                melds_count,
+                dora_inds,
+                open_melds,
+            )
             pre_hand_codes = sorted(hands[hero_seat] + [drawn_code])
             pre_hand = [_decode_tenhou_tile(n) for n in pre_hand_codes]
             snaps.append(
@@ -353,8 +376,30 @@ def _process_discard(
                     all_discards=[list(p) for p in discard_piles],
                     riichi_turns=list(riichi_declared_turn),
                     open_melds=[[list(m) for m in seat] for seat in open_melds],
+                    hero_riichi_declared_now=riichi_now,
                 )
             )
+    else:
+        _maybe_record_call_opportunity(
+            active,
+            discarded,
+            hands,
+            hero_seat,
+            riichi_declared_turn,
+            melds_count,
+            open_melds,
+            draws,
+            draw_ptr,
+            turn_counter,
+            discard_piles,
+            discards_after_riichi,
+            dora_inds,
+            opportunities,
+            round_idx,
+            round_number,
+            round_wind,
+            honba,
+        )
 
     if drawn_code is not None:
         hands[active].append(drawn_code)
@@ -477,3 +522,88 @@ def _alt_encoding(t: Tile) -> int | None:
         return {"m": 15, "p": 25, "s": 35}[t.suit]
     return {"m": 51, "p": 52, "s": 53}[t.suit]
 
+
+def _maybe_record_call_opportunity(
+    active: int,
+    discarded: Tile,
+    hands: list[list[int]],
+    hero_seat: int,
+    riichi_declared_turn: list[int | None],
+    melds_count: list[int],
+    open_melds: list[list[list[Tile]]],
+    draws: list[list[Any]],
+    draw_ptr: list[int],
+    turn_counter: list[int],
+    discard_piles: list[list[Tile]],
+    discards_after_riichi: list[list[Tile]],
+    dora_inds: list[Tile],
+    opportunities: list[CallOpportunity],
+    round_idx: int,
+    round_number: int,
+    round_wind: int,
+    honba: int,
+) -> None:
+    """Record a pon/chi chance for the hero on an opponent's discard, noting
+    whether the hero actually took it (their call string, if any, sits at the
+    head of their draw stream)."""
+    if riichi_declared_turn[hero_seat] is not None:
+        return
+    hero_codes = hands[hero_seat]
+    if len(hero_codes) != 13 - 3 * melds_count[hero_seat]:
+        return
+    hero_tiles = [_decode_tenhou_tile(n) for n in hero_codes]
+    tid = discarded.tid
+
+    can_pon = sum(1 for t in hero_tiles if t.tid == tid) >= 2
+    can_chi = False
+    if active == (hero_seat + 3) % 4 and not discarded.is_honor:
+        tids = {t.tid for t in hero_tiles}
+        r = discarded.rank
+        suit_off = tid - (r - 1)
+        for a, b in ((r - 2, r - 1), (r - 1, r + 1), (r + 1, r + 2)):
+            if (
+                1 <= a <= 9
+                and 1 <= b <= 9
+                and (suit_off + a - 1) in tids
+                and (suit_off + b - 1) in tids
+            ):
+                can_chi = True
+                break
+    if not can_pon and not can_chi:
+        return
+
+    called = False
+    if draw_ptr[hero_seat] < len(draws[hero_seat]):
+        ent = draws[hero_seat][draw_ptr[hero_seat]]
+        if isinstance(ent, str) and any(ch in "cpm" for ch in ent):
+            _, _, called_code = _parse_call(ent)
+            if called_code is not None and _decode_tenhou_tile(called_code).tid == tid:
+                called = True
+
+    threats = build_threats(
+        hero_seat,
+        discard_piles,
+        discards_after_riichi,
+        riichi_declared_turn,
+        melds_count,
+        dora_inds,
+        open_melds,
+    )
+    opportunities.append(
+        CallOpportunity(
+            round_index=round_idx,
+            round_number=round_number,
+            round_wind=round_wind,
+            honba=honba,
+            turn=turn_counter[active],
+            hero_seat=hero_seat,
+            tile=discarded,
+            can_pon=can_pon,
+            can_chi=can_chi,
+            called=called,
+            hero_hand=hero_tiles,
+            hero_melds_count=melds_count[hero_seat],
+            hero_meld_tiles=[t for m in open_melds[hero_seat] for t in m],
+            threats_count=len(threats),
+        )
+    )

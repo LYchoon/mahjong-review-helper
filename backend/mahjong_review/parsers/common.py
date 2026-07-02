@@ -34,6 +34,33 @@ class Snapshot:
     all_discards: list[list[Tile]] = field(default_factory=list)
     riichi_turns: list[int | None] = field(default_factory=list)
     open_melds: list[list[list[Tile]]] = field(default_factory=list)  # [seat][meld_idx][tiles]
+    hero_riichi_declared_now: bool = False  # this discard IS the riichi declaration
+
+
+@dataclass
+class CallOpportunity:
+    """An opponent discard the hero could have called (pon / chi)."""
+
+    round_index: int
+    round_number: int
+    round_wind: int
+    honba: int
+    turn: int  # discarder's turn counter when the tile hit the pond
+    hero_seat: int
+    tile: Tile  # the discarded tile
+    can_pon: bool
+    can_chi: bool
+    called: bool  # whether the hero actually called it
+    hero_hand: list[Tile]  # hero's concealed hand at that moment (13 - 3*melds)
+    hero_melds_count: int
+    hero_meld_tiles: list[Tile]  # flattened existing melds
+    threats_count: int
+
+
+@dataclass
+class ParseResult:
+    snapshots: list[Snapshot]
+    call_opportunities: list[CallOpportunity]
 
 
 def build_threats(

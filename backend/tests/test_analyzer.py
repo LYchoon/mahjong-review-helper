@@ -126,3 +126,50 @@ def test_efficiency_summary_counts():
     assert s.total == 2
     assert s.efficiency_total == 1
     assert s.defense_total == 1
+
+
+def test_riichi_advice_recommends_riichi_when_dama_has_no_yaku():
+    # 234m 567p 234s 678s 1z tanki after discarding 9m — no yaku without riichi
+    hand = tiles_from_str("234m 567p 234s 678s 1z 9m")
+    visible = _visible_from(hand)
+    hero = HeroState(seat=0, hand=hand, turn=7, turns_remaining=10)
+    review = review_decision(Tile.from_str("9m"), hero, [], visible)
+    advice = review.riichi_advice
+    assert advice is not None
+    assert advice.recommended is True
+    assert advice.declared is False
+    assert any("無役" in r for r in advice.reasons)
+
+
+def test_riichi_advice_dama_ok_with_big_yaku():
+    # chinitsu tenpai: dama already worth plenty with a real yaku
+    hand = tiles_from_str("123m 456m 789m 22m 57m 1z")
+    visible = _visible_from(hand)
+    hero = HeroState(seat=0, hand=hand, turn=7, turns_remaining=10)
+    review = review_decision(Tile.from_str("1z"), hero, [], visible)
+    advice = review.riichi_advice
+    assert advice is not None
+    assert advice.recommended is False
+    assert any("有役" in r for r in advice.reasons)
+
+
+def test_riichi_advice_furiten_wait():
+    hand = tiles_from_str("234m 567p 234s 678s 1z 9m")
+    visible = _visible_from(hand)
+    hero = HeroState(
+        seat=0, hand=hand, turn=7, turns_remaining=10,
+        own_discards=tiles_from_str("1z"),
+    )
+    review = review_decision(Tile.from_str("9m"), hero, [], visible)
+    advice = review.riichi_advice
+    assert advice is not None
+    assert advice.recommended is False
+    assert any("振聽" in r for r in advice.reasons)
+
+
+def test_no_riichi_advice_when_not_tenpai():
+    hand = tiles_from_str("139m 258p 147s 12z 33z")
+    visible = _visible_from(hand)
+    hero = HeroState(seat=0, hand=hand, turn=3, turns_remaining=14)
+    review = review_decision(Tile.from_str("1z"), hero, [], visible)
+    assert review.riichi_advice is None

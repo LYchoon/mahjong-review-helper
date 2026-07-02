@@ -180,3 +180,81 @@ def test_majsoul_review_endpoint():
 def test_majsoul_review_rejects_garbage():
     resp = client.post("/review/majsoul", json={"log": {"foo": "bar"}, "hero_seat": 0})
     assert resp.status_code == 400
+
+
+def test_tenhou_hero_riichi_flow():
+    """Hero declares riichi: the declaration discard carries riichi advice with
+    declared=True, and forced post-riichi discards are not reviewed."""
+    log = {
+        "title": ["test", ""],
+        "name": ["a", "b", "c", "d"],
+        "rule": {},
+        "log": [
+            [
+                [0, 0, 0],
+                [25000] * 4,
+                [46],
+                [],
+                # hero (dealer): 234m 567p 234s 678s 1z + 9m, tenpai on 1z after 9m cut
+                [12, 13, 14, 25, 26, 27, 32, 33, 34, 36, 37, 38, 41],
+                [19, 15, 16],
+                ["r19", "60", "60"],  # riichi discarding the drawn 9m, then tsumogiri
+                [14, 15, 16, 24, 25, 26, 34, 35, 36, 44, 44, 45, 45],
+                [33, 34, 35],
+                [33, 34, 35],
+                [15, 16, 17, 25, 26, 27, 35, 36, 37, 46, 46, 47, 47],
+                [36, 37, 38],
+                [36, 37, 38],
+                [18, 19, 11, 28, 29, 21, 38, 39, 31, 41, 42, 43, 44],
+                [45, 46, 47],
+                [45, 46, 47],
+                ["流局", [0, 0, 0, 0]],
+            ]
+        ],
+    }
+    resp = client.post("/review/tenhou", json={"log": log, "hero_seat": 0})
+    assert resp.status_code == 200
+    body = resp.json()
+    # only the riichi declaration itself is a decision; forced discards skipped
+    assert len(body["decisions"]) == 1
+    d = body["decisions"][0]
+    assert d["riichi"] is not None
+    assert d["riichi"]["declared"] is True
+    assert d["riichi"]["recommended"] is True  # tanki 1z, no yaku dama
+    assert "calls" in body
+
+
+def test_tenhou_missed_yakuhai_pon_reported():
+    log = {
+        "title": ["test", ""],
+        "name": ["a", "b", "c", "d"],
+        "rule": {},
+        "log": [
+            [
+                [3, 0, 0],  # dealer = seat 3, so seat 3 discards before hero acts
+                [25000] * 4,
+                [41],
+                [],
+                [45, 45, 12, 13, 21, 22, 23, 31, 32, 33, 42, 43, 44],
+                [24],
+                [24],
+                [14, 15, 16, 24, 25, 26, 34, 35, 36, 44, 44, 46, 46],
+                [33],
+                [33],
+                [15, 16, 17, 25, 26, 27, 35, 36, 37, 46, 47, 47, 11],
+                [36],
+                [36],
+                [18, 19, 11, 28, 29, 21, 38, 39, 31, 41, 42, 43, 44],
+                [45],
+                [45],  # seat 3 discards haku; hero holds two and passes
+                ["流局", [0, 0, 0, 0]],
+            ]
+        ],
+    }
+    resp = client.post("/review/tenhou", json={"log": log, "hero_seat": 0})
+    assert resp.status_code == 200
+    calls = resp.json()["calls"]
+    missed = [c for c in calls if c["tile"] == "5z"]
+    assert len(missed) == 1
+    assert missed[0]["actual"] == "passed"
+    assert missed[0]["recommended"] == "call"

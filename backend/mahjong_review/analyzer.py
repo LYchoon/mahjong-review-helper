@@ -26,6 +26,7 @@ from .danger import (
 )
 from .ev import PushFoldDecision, estimate_hand_value, evaluate_push
 from .hand_value import quick_yaku_han
+from .parsers.common import CallOpportunity
 from .shanten import effective_tiles, shanten
 from .tiles import Tile
 
@@ -47,6 +48,7 @@ class HeroState:
     seat_wind: int = 27  # default E; analyzer derives proper value when given
     own_discards: list[Tile] = field(default_factory=list)  # for furiten detection
     meld_tiles: list[Tile] = field(default_factory=list)  # flattened own open melds
+    declared_riichi_now: bool = False  # this discard is a riichi declaration
 
 
 @dataclass
@@ -69,6 +71,15 @@ DecisionType = Literal["defense", "efficiency"]
 
 
 @dataclass
+class RiichiAdvice:
+    """Riichi vs dama advice for a closed tenpai discard."""
+
+    declared: bool  # what the hero actually did
+    recommended: bool  # True = declare riichi
+    reasons: list[str]
+
+
+@dataclass
 class DecisionReview:
     situation: str
     your_choice: AlternativeOption
@@ -79,6 +90,7 @@ class DecisionReview:
     label: Label
     summary: str
     decision_type: DecisionType = "defense"
+    riichi_advice: RiichiAdvice | None = None
 
 
 def review_decision(
@@ -140,6 +152,7 @@ def review_decision(
         label=label,
         summary=_summarise(label, your_opt, best_opt, ev_gap),
         decision_type="defense",
+        riichi_advice=_riichi_advice(hero, your_opt, visible_counts, len(threats)),
     )
 
 
@@ -179,6 +192,7 @@ def _review_efficiency(
         label=label,
         summary=_summarise_efficiency(label, your_opt, best_opt, ev_gap),
         decision_type="efficiency",
+        riichi_advice=_riichi_advice(hero, your_opt, visible_counts, 0),
     )
 
 
@@ -213,6 +227,70 @@ def _shanten_word(sh: int) -> str:
     if sh == 0:
         return "聽牌"
     return f"{sh} 向聽"
+
+
+_REAL_YAKU_TAGS = ("斷么", "七對子路線", "混一色", "清一色", "對對和路線")
+
+
+def _has_real_yaku(tags: list[str]) -> bool:
+    """True if the tag list contains a yaku that allows winning without riichi
+    (dora and the 1-han floor don't count)."""
+    return any(t in _REAL_YAKU_TAGS or t.startswith("役牌×3") for t in tags)
+
+
+def _riichi_advice(
+    hero: HeroState,
+    your_opt: AlternativeOption,
+    visible_counts: list[int],
+    threats_count: int,
+) -> RiichiAdvice | None:
+    """Riichi vs dama advice when the chosen discard leaves a closed tenpai."""
+    if hero.melds_count != 0 or your_opt.shanten_after != 0:
+        return None
+    after_hand = _hand_without(hero.hand, your_opt.tile)
+    if len(after_hand) != 13:
+        return None
+
+    waits = effective_tiles(after_hand, 0)
+    live_waits = sum(max(0, 4 - visible_counts[t]) for t in waits)
+    own_tids = {t.tid for t in hero.own_discards} | {your_opt.tile.tid}
+    furiten = bool(set(waits) & own_tids)
+
+    common = dict(
+        melds_count=0,
+        is_dealer=hero.is_dealer,
+        round_wind_tid=hero.round_wind,
+        seat_wind_tid=hero.seat_wind,
+        dora_count=hero.dora_count,
+    )
+    riichi_han, _ = quick_yaku_han(after_hand, likely_to_riichi=True, **common)
+    dama_han, dama_tags = quick_yaku_han(after_hand, likely_to_riichi=False, **common)
+    dama_has_yaku = _has_real_yaku(dama_tags)
+    riichi_value = estimate_hand_value(riichi_han, is_dealer=hero.is_dealer).points
+
+    reasons = [f"待牌 {len(waits)} 種 / 場上還剩 {live_waits} 枚"]
+    if furiten:
+        recommended = False
+        reasons.append("待牌振聽 — 立直後只能自摸；默聽保留換聽彈性")
+    elif not dama_has_yaku:
+        recommended = True
+        reasons.append("默聽無役 (榮和不可，只能門清自摸) — 立直補上役與打點")
+    elif dama_han >= 4:
+        recommended = False
+        reasons.append(f"默聽已約 {dama_han} 翻且有役 — 隱藏聽牌、保留自由度價值更高")
+    elif threats_count > 0 and riichi_value < 3900 and live_waits <= 4:
+        recommended = False
+        reasons.append("場上已有威脅、手牌便宜且待牌薄 — 不值得立直對衝")
+    else:
+        recommended = True
+        reasons.append(
+            f"標準立直 (+1 翻 + 裏寶期望 + 施壓)，立直線估值約 {int(riichi_value)} 點"
+        )
+    return RiichiAdvice(
+        declared=hero.declared_riichi_now,
+        recommended=recommended,
+        reasons=reasons,
+    )
 
 
 def _combined_assessment(
@@ -483,3 +561,139 @@ def summarise_game(reviews: list[DecisionReview]) -> GameSummary:
             summary.biggest_blunder = r
             summary.biggest_blunder_index = i
     return summary
+
+
+# ---- call (chi/pon) review ----
+
+
+@dataclass
+class CallReview:
+    """Review of one call opportunity (taken or passed)."""
+
+    round_number: int
+    turn: int
+    tile: Tile
+    kind: str  # "pon" | "chi" — best available call shape
+    actual: str  # "called" | "passed"
+    recommended: str  # "call" | "pass"
+    label: Label
+    reasons: list[str]
+    shanten_before: int
+    shanten_after: int  # best shanten reachable by calling (then discarding)
+
+
+def review_call(opp: CallOpportunity, seat_wind: int = 27) -> CallReview | None:
+    """Judge whether calling the discarded tile was (or would have been) good.
+
+    Heuristic: a call is worth it when it secures a yakuhai yaku without losing
+    tempo, or advances shanten while a real yaku remains available. Otherwise
+    passing keeps the closed-hand (riichi / menzen tsumo) value.
+    """
+    hand = opp.hero_hand
+    m = opp.hero_melds_count
+    if len(hand) != 13 - 3 * m:
+        return None
+    sh_before = shanten(hand, m)
+    tile = opp.tile
+
+    variants: list[tuple[str, list[Tile]]] = []
+    if opp.can_pon:
+        same = [t for t in hand if t.tid == tile.tid][:2]
+        if len(same) == 2:
+            variants.append(("pon", same))
+    if opp.can_chi:
+        r = tile.rank
+        suit_off = tile.tid - (r - 1)
+        for a, b in ((r - 2, r - 1), (r - 1, r + 1), (r + 1, r + 2)):
+            if not (1 <= a <= 9 and 1 <= b <= 9):
+                continue
+            ta = next((t for t in hand if t.tid == suit_off + a - 1), None)
+            tb = next((t for t in hand if t.tid == suit_off + b - 1), None)
+            if ta is not None and tb is not None:
+                variants.append(("chi", [ta, tb]))
+    if not variants:
+        return None
+
+    best: tuple[int, int, str, bool] | None = None  # (shanten, no_yaku, kind, has_yaku)
+    for kind, used in variants:
+        remaining = list(hand)
+        for u in used:
+            remaining.remove(u)
+        # after calling, the hero must discard: take the best resulting shanten
+        best_sh = 99
+        best_after: list[Tile] | None = None
+        seen: set[int] = set()
+        for i, d in enumerate(remaining):
+            if d.tid in seen:
+                continue
+            seen.add(d.tid)
+            after = remaining[:i] + remaining[i + 1 :]
+            sh = shanten(after, m + 1)
+            if sh < best_sh:
+                best_sh = sh
+                best_after = after
+        if best_after is None:
+            continue
+        _, tags = quick_yaku_han(
+            best_after,
+            melds_count=m + 1,
+            round_wind_tid=opp.round_wind,
+            seat_wind_tid=seat_wind,
+            likely_to_riichi=False,
+            meld_tiles=opp.hero_meld_tiles + used + [tile],
+        )
+        has_yaku = _has_real_yaku(tags)
+        cand = (best_sh, 0 if has_yaku else 1, kind, has_yaku)
+        if best is None or cand[:2] < best[:2]:
+            best = cand
+    if best is None:
+        return None
+    sh_after, _, kind, has_yaku = best
+
+    yakuhai_tids = {31, 32, 33, opp.round_wind, seat_wind}
+    is_yakuhai_pon = kind == "pon" and tile.tid in yakuhai_tids
+    closed_tenpai = sh_before == 0 and m == 0
+
+    reasons: list[str] = []
+    if is_yakuhai_pon and sh_after <= sh_before and not closed_tenpai:
+        recommended = "call"
+        reasons.append(f"碰 {tile} 直接確保役牌役 (向聽 {sh_before} → {sh_after})")
+    elif sh_after < sh_before and has_yaku and not closed_tenpai:
+        recommended = "call"
+        reasons.append(f"鳴後向聽 {sh_before} → {sh_after}，且仍有確定役")
+    else:
+        recommended = "pass"
+        if closed_tenpai:
+            reasons.append("已是門清聽牌 — 保留立直/門清價值，不需副露")
+        elif not has_yaku:
+            reasons.append("鳴了之後沒有確定役 — 副露會斷送立直/門清自摸路線")
+        else:
+            reasons.append(f"鳴牌不加速 (向聽 {sh_before} → {sh_after})，門清價值更高")
+    if opp.threats_count > 0:
+        reasons.append("場上已有威脅，鳴牌前先評估防守")
+
+    actual = "called" if opp.called else "passed"
+    agree = (actual == "called") == (recommended == "call")
+    if agree:
+        label: Label = "best"
+    elif opp.called and not has_yaku:
+        label = "mistake"
+        reasons.append("實際鳴了 — 無役副露很難和牌")
+    elif not opp.called and is_yakuhai_pon and sh_after == 0 and sh_before > 0:
+        label = "mistake"
+        reasons.append("漏掉役牌碰直接聽牌的機會")
+    else:
+        label = "inaccuracy"
+
+    return CallReview(
+        round_number=opp.round_number,
+        turn=opp.turn,
+        tile=tile,
+        kind=kind,
+        actual=actual,
+        recommended=recommended,
+        label=label,
+        reasons=reasons,
+        shanten_before=sh_before,
+        shanten_after=sh_after,
+    )

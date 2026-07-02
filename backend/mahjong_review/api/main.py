@@ -12,13 +12,14 @@ from pydantic import BaseModel, Field
 from ..analyzer import (
     DecisionReview,
     HeroState,
+    review_call,
     review_decision,
     summarise_game,
 )
 from ..danger import Threat, ThreatKind
-from ..parsers.common import Snapshot
-from ..parsers.majsoul import parse_majsoul_log
-from ..parsers.tenhou import parse_tenhou_log
+from ..parsers.common import CallOpportunity, ParseResult, Snapshot
+from ..parsers.majsoul import parse_majsoul_log_full
+from ..parsers.tenhou import parse_tenhou_log_full
 from ..tiles import Tile, tile_counts, tiles_from_str
 
 logger = logging.getLogger(__name__)
@@ -115,11 +116,31 @@ class BoardStateOut(BaseModel):
     threats: list[dict[str, object]]
 
 
+class RiichiAdviceOut(BaseModel):
+    declared: bool
+    recommended: bool
+    reasons: list[str]
+
+
+class CallReviewOut(BaseModel):
+    round_label: str
+    turn: int
+    tile: str
+    kind: str  # "pon" | "chi"
+    actual: str  # "called" | "passed"
+    recommended: str  # "call" | "pass"
+    label: str
+    reasons: list[str]
+    shanten_before: int
+    shanten_after: int
+
+
 class DecisionReviewOut(BaseModel):
     situation: str
     label: str
     summary: str
     decision_type: str = "defense"  # "defense" | "efficiency"
+    riichi: RiichiAdviceOut | None = None
     your_choice: AlternativeOut
     recommendation: AlternativeOut
     alternatives: list[AlternativeOut]
@@ -150,6 +171,7 @@ class TenhouReviewResponse(BaseModel):
     hero_seat: int
     decisions: list[DecisionReviewOut]
     summary: GameSummaryOut
+    calls: list[CallReviewOut] = []
 
 
 # -------- routes --------
@@ -218,19 +240,62 @@ def review_manual(req: ManualReviewRequest) -> DecisionReviewOut:
 @app.post("/review/tenhou", response_model=TenhouReviewResponse)
 def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
     try:
-        snapshots = parse_tenhou_log(req.log, req.hero_seat)
+        parsed = parse_tenhou_log_full(req.log, req.hero_seat)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"tenhou parse failed: {e}") from e
-    return _review_snapshots(snapshots, req.hero_seat)
+    return _build_review_response(parsed, req.hero_seat)
 
 
 @app.post("/review/majsoul", response_model=TenhouReviewResponse)
 def review_majsoul(req: MajsoulReviewRequest) -> TenhouReviewResponse:
     try:
-        snapshots = parse_majsoul_log(req.log, req.hero_seat)
+        parsed = parse_majsoul_log_full(req.log, req.hero_seat)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"majsoul parse failed: {e}") from e
-    return _review_snapshots(snapshots, req.hero_seat)
+    return _build_review_response(parsed, req.hero_seat)
+
+
+def _build_review_response(parsed: ParseResult, hero_seat: int) -> TenhouReviewResponse:
+    response = _review_snapshots(parsed.snapshots, hero_seat)
+    response.calls = _review_calls(parsed.call_opportunities)
+    return response
+
+
+def _review_calls(opportunities: list[CallOpportunity]) -> list[CallReviewOut]:
+    out: list[CallReviewOut] = []
+    for opp in opportunities:
+        dealer_seat = opp.round_number % 4
+        seat_wind = 27 + ((opp.hero_seat - dealer_seat) % 4)
+        try:
+            review = review_call(opp, seat_wind=seat_wind)
+        except Exception:
+            logger.exception(
+                "review_call failed for round_number=%s turn=%s — skipped",
+                opp.round_number,
+                opp.turn,
+            )
+            continue
+        if review is None:
+            continue
+        # keep the list meaningful: always review actual calls; only surface a
+        # pass when we would have called (a missed opportunity)
+        if not opp.called and review.recommended != "call":
+            continue
+        out.append(
+            CallReviewOut(
+                round_label=_round_label(opp.round_number),
+                turn=review.turn,
+                tile=str(review.tile),
+                kind=review.kind,
+                actual=review.actual,
+                recommended=review.recommended,
+                label=review.label,
+                reasons=review.reasons,
+                shanten_before=review.shanten_before,
+                shanten_after=review.shanten_after,
+            )
+        )
+    return out
 
 
 def _review_snapshots(snapshots: list[Snapshot], hero_seat: int) -> TenhouReviewResponse:
@@ -257,6 +322,7 @@ def _review_snapshots(snapshots: list[Snapshot], hero_seat: int) -> TenhouReview
                 if snap.open_melds
                 else []
             ),
+            declared_riichi_now=snap.hero_riichi_declared_now,
         )
         try:
             review = review_decision(
@@ -321,11 +387,15 @@ _ROUND_LABELS = [
 ]
 
 
+def _round_label(round_number: int) -> str:
+    if round_number < len(_ROUND_LABELS):
+        return _ROUND_LABELS[round_number]
+    return f"R{round_number + 1}"
+
+
 def _board_from_snapshot(snap: Snapshot) -> BoardStateOut:
     return BoardStateOut(
-        round_label=_ROUND_LABELS[snap.round_number]
-        if snap.round_number < len(_ROUND_LABELS)
-        else f"R{snap.round_number + 1}",
+        round_label=_round_label(snap.round_number),
         turn=snap.turn,
         hero_seat=snap.hero_seat,
         hero_hand=[str(t) for t in snap.hero_hand],
@@ -381,6 +451,15 @@ def _serialize_review(r: DecisionReview) -> DecisionReviewOut:
         label=r.label,
         summary=r.summary,
         decision_type=r.decision_type,
+        riichi=(
+            RiichiAdviceOut(
+                declared=r.riichi_advice.declared,
+                recommended=r.riichi_advice.recommended,
+                reasons=r.riichi_advice.reasons,
+            )
+            if r.riichi_advice
+            else None
+        ),
         your_choice=alt(r.your_choice),
         recommendation=alt(r.recommendation),
         alternatives=[alt(a) for a in r.alternatives],
