@@ -47,9 +47,12 @@ def test_manual_review_ok():
     assert body["your_choice"]["danger"] == 0.0
 
 
-def test_manual_review_requires_threat():
+def test_manual_review_without_threat_runs_efficiency_review():
     resp = client.post("/review/manual", json=_manual_request(threats=[]))
-    assert resp.status_code == 400
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["decision_type"] == "efficiency"
+    assert all(a["danger"] == 0.0 for a in body["alternatives"])
 
 
 def test_manual_review_rejects_bad_discard():
@@ -166,7 +169,11 @@ def test_majsoul_review_endpoint():
     resp = client.post("/review/majsoul", json={"log": log, "hero_seat": 0})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["summary"]["total"] == 1
+    # hero's first discard (no threat) = efficiency, second (under riichi) = defense
+    assert body["summary"]["total"] == 2
+    assert body["summary"]["efficiency_total"] == 1
+    assert body["summary"]["defense_total"] == 1
+    assert [d["decision_type"] for d in body["decisions"]] == ["efficiency", "defense"]
     assert body["decisions"][0]["board"]["round_label"] == "南1"
 
 

@@ -11,9 +11,13 @@ SAMPLE_PATH = Path(__file__).parent.parent.parent / "sample_logs" / "riichi_defe
 def test_sample_log_yields_defense_snapshots():
     data = json.loads(SAMPLE_PATH.read_text())
     snaps = parse_tenhou_log(data, hero_seat=0)
-    # demo log has seat-1 riichi on turn 4 and 6 hero discards after that
-    assert len(snaps) >= 5
-    assert all(any(t.kind.value == "riichi" for t in s.threats) for s in snaps)
+    # every hero discard now yields a snapshot; the demo log has seat-1 riichi
+    # on turn 4 and 6 hero discards after that (threats non-empty)
+    defense = [s for s in snaps if s.threats]
+    assert len(defense) >= 5
+    assert all(any(t.kind.value == "riichi" for t in s.threats) for s in defense)
+    # pre-riichi discards are emitted too, with no threats
+    assert any(not s.threats for s in snaps)
 
 
 def test_snapshot_carries_full_visible_state():

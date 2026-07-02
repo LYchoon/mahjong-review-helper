@@ -79,10 +79,10 @@ def _decode_tile_str(s: str) -> Tile:
 
 
 def parse_tenhou_log(raw: str | dict[str, Any], hero_seat: int) -> list[Snapshot]:
-    """Parse a tenhou JSON log into hero defense decision points.
+    """Parse a tenhou JSON log into hero discard decision points.
 
-    Returns only snapshots where at least one opponent has declared riichi at or
-    before this turn (the MVP defense-only filter).
+    Emits a snapshot for every hero discard; `Snapshot.threats` is empty when no
+    opponent threat exists (the analyser then runs an efficiency review).
     """
     data = json.loads(raw) if isinstance(raw, str) else raw
     log = data.get("log", [])
@@ -332,7 +332,7 @@ def _process_discard(
             dora_inds,
             open_melds,
         )
-        if threats and drawn_code is not None:
+        if drawn_code is not None:
             pre_hand_codes = sorted(hands[hero_seat] + [drawn_code])
             pre_hand = [_decode_tenhou_tile(n) for n in pre_hand_codes]
             snaps.append(

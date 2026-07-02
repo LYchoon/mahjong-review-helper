@@ -76,6 +76,10 @@ class ManualReviewRequest(BaseModel):
         default="",
         description="hero's own discard pile, used for furiten detection",
     )
+    meld_tiles: str = Field(
+        default="",
+        description="tiles in hero's open melds (flattened), sharpens yaku estimates",
+    )
 
 
 class FactorOut(BaseModel):
@@ -115,6 +119,7 @@ class DecisionReviewOut(BaseModel):
     situation: str
     label: str
     summary: str
+    decision_type: str = "defense"  # "defense" | "efficiency"
     your_choice: AlternativeOut
     recommendation: AlternativeOut
     alternatives: list[AlternativeOut]
@@ -137,6 +142,8 @@ class GameSummaryOut(BaseModel):
     accuracy: float
     total_ev_lost: float
     biggest_blunder_index: int | None  # index into decisions list
+    defense_total: int = 0
+    efficiency_total: int = 0
 
 
 class TenhouReviewResponse(BaseModel):
@@ -184,11 +191,9 @@ def review_manual(req: ManualReviewRequest) -> DecisionReviewOut:
                 discards_after_threat=tiles_from_str(" ".join(tm.discards_after_threat)),
             )
         )
-    if not threats:
-        raise HTTPException(status_code=400, detail="defense review requires at least one threat")
-
     # threat discards are visible tiles too — fold them in so kabe / honor-count
-    # logic sees them (matches what the tenhou parser does automatically)
+    # logic sees them (matches what the tenhou parser does automatically).
+    # an empty threats list is allowed: the analyser runs an efficiency review.
     for th in threats:
         for t in th.discards:
             if visible[t.tid] < 4:
@@ -204,6 +209,7 @@ def review_manual(req: ManualReviewRequest) -> DecisionReviewOut:
         turns_remaining=req.turns_remaining,
         round_wind=round_wind_t.tid,
         own_discards=tiles_from_str(req.own_discards),
+        meld_tiles=tiles_from_str(req.meld_tiles),
     )
     review = review_decision(chosen_t, hero, threats, visible)
     return _serialize_review(review)
@@ -246,6 +252,11 @@ def _review_snapshots(snapshots: list[Snapshot], hero_seat: int) -> TenhouReview
             own_discards=(
                 snap.all_discards[snap.hero_seat] if snap.all_discards else []
             ),
+            meld_tiles=(
+                [t for meld in snap.open_melds[snap.hero_seat] for t in meld]
+                if snap.open_melds
+                else []
+            ),
         )
         try:
             review = review_decision(
@@ -278,6 +289,8 @@ def _review_snapshots(snapshots: list[Snapshot], hero_seat: int) -> TenhouReview
         accuracy=summary.accuracy,
         total_ev_lost=round(summary.total_ev_lost, 0),
         biggest_blunder_index=summary.biggest_blunder_index,
+        defense_total=summary.defense_total,
+        efficiency_total=summary.efficiency_total,
     )
 
     return TenhouReviewResponse(
@@ -367,6 +380,7 @@ def _serialize_review(r: DecisionReview) -> DecisionReviewOut:
         situation=r.situation,
         label=r.label,
         summary=r.summary,
+        decision_type=r.decision_type,
         your_choice=alt(r.your_choice),
         recommendation=alt(r.recommendation),
         alternatives=[alt(a) for a in r.alternatives],

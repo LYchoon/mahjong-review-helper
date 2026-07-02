@@ -83,3 +83,46 @@ def test_melded_hand_is_reviewable():
     hero = HeroState(seat=0, hand=hand, melds_count=1, turn=6, turns_remaining=10)
     review = review_decision(Tile.from_str("1z"), hero, [threat], visible)
     assert review.your_choice.danger == 0.0
+
+
+def test_efficiency_review_no_threats():
+    # 234m 567p 234s 678s 1z 9m — best is discarding 1z or 9m to keep tenpai;
+    # cutting 4s instead breaks a completed run.
+    hand = tiles_from_str("234m 567p 234s 678s 1z 9m")
+    visible = _visible_from(hand)
+    hero = HeroState(seat=0, hand=hand, turn=5, turns_remaining=12)
+
+    good = review_decision(Tile.from_str("9m"), hero, [], visible)
+    assert good.decision_type == "efficiency"
+    assert good.your_choice.shanten_after == 0
+    assert all(a.danger == 0.0 for a in good.alternatives)
+    assert all(not a.factors for a in good.alternatives)
+
+    bad = review_decision(Tile.from_str("4s"), hero, [], visible)
+    assert bad.decision_type == "efficiency"
+    assert bad.your_choice.shanten_after > good.your_choice.shanten_after
+    assert bad.your_decision.push_ev < good.your_decision.push_ev
+    assert bad.label != "best"
+
+
+def test_efficiency_summary_counts():
+    from mahjong_review.analyzer import summarise_game
+
+    hand = tiles_from_str("234m 567p 234s 678s 1z 9m")
+    visible = _visible_from(hand)
+    hero = HeroState(seat=0, hand=hand, turn=5, turns_remaining=12)
+    eff = review_decision(Tile.from_str("9m"), hero, [], visible)
+
+    threat = Threat(
+        player=1,
+        kind=ThreatKind.RIICHI,
+        declared_turn=4,
+        discards=tiles_from_str("2p 8m"),
+        discards_after_threat=tiles_from_str("2p"),
+    )
+    dfs = review_decision(Tile.from_str("9m"), hero, [threat], visible)
+
+    s = summarise_game([eff, dfs])
+    assert s.total == 2
+    assert s.efficiency_total == 1
+    assert s.defense_total == 1

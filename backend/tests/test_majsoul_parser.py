@@ -49,8 +49,10 @@ def test_basic_riichi_threat_snapshot():
         ],
     }
     snaps = parse_majsoul_log(log, hero_seat=0)
-    assert len(snaps) == 1
-    snap = snaps[0]
+    # first hero discard has no threat (efficiency), second is under riichi
+    assert len(snaps) == 2
+    assert snaps[0].threats == []
+    snap = snaps[1]
     assert snap.round_number == 0
     assert snap.round_wind == 27
     assert len(snap.hero_hand) == 14
@@ -77,9 +79,10 @@ def test_south_round_number_and_wind():
         ],
     }
     snaps = parse_majsoul_log(log, hero_seat=0)
-    assert len(snaps) == 1
-    assert snaps[0].round_number == 5
-    assert snaps[0].round_wind == 28
+    threatened = [s for s in snaps if s.threats]
+    assert len(threatened) == 1
+    assert threatened[0].round_number == 5
+    assert threatened[0].round_wind == 28
 
 
 def test_hero_ankan_keeps_hand_consistent():
@@ -104,7 +107,7 @@ def test_hero_ankan_keeps_hand_consistent():
             act("NoTile"),
         ],
     }
-    snaps = parse_majsoul_log(log, hero_seat=0)
+    snaps = [s for s in parse_majsoul_log(log, hero_seat=0) if s.threats]
     assert len(snaps) == 1
     snap = snaps[0]
     assert snap.hero_melds_count == 1
@@ -130,7 +133,7 @@ def test_opponent_call_reveals_only_hand_tiles():
             act("NoTile"),
         ],
     }
-    snaps = parse_majsoul_log(log, hero_seat=0)
+    snaps = [s for s in parse_majsoul_log(log, hero_seat=0) if s.threats]
     assert len(snaps) == 1
     snap = snaps[0]
     # seat 1's chi is tracked as an open meld

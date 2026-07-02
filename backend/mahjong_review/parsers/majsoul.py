@@ -29,8 +29,8 @@ Action fields used:
     RecordChiPengGang:   seat, type (0=chi 1=pon 2=daiminkan), tiles, froms
     RecordAnGangAddGang: seat, type (3=ankan 2=kakan), tiles (single string)
 
-Like the tenhou parser, this emits a `Snapshot` per hero discard made while at
-least one opponent threat exists.
+Like the tenhou parser, this emits a `Snapshot` per hero discard; snapshots
+without opponent threats get an efficiency review from the analyser.
 """
 
 from __future__ import annotations
@@ -197,7 +197,7 @@ class _RoundState:
                 self.open_melds,
             )
             # only full-size hands are reviewable (14 - 3*melds pre-discard)
-            if threats and len(self.hands[seat]) == 14 - 3 * self.melds_count[seat]:
+            if len(self.hands[seat]) == 14 - 3 * self.melds_count[seat]:
                 snaps.append(
                     Snapshot(
                         round_index=self.round_idx,

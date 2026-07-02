@@ -123,19 +123,23 @@ class PushFoldDecision:
 
 def evaluate_push(
     assessment: DangerAssessment,
-    threat: Threat,
+    threat: Threat | None,
     own_shanten: int,
     own_hand_value: HandValue,
     turns_remaining: int = 10,
 ) -> PushFoldDecision:
-    """Decide whether discarding `assessment.tile` to push is +EV vs folding."""
-    deal_in_prob = assessment.score / 100.0
+    """Decide whether discarding `assessment.tile` to push is +EV vs folding.
+
+    With `threat=None` (no opponent threat — pure efficiency analysis) the
+    deal-in side is zero and the EV is simply win_prob × hand value.
+    """
+    deal_in_prob = assessment.score / 100.0 if threat is not None else 0.0
     win_prob = WIN_PROB_BY_SHANTEN.get(min(own_shanten, 4), 0.0)
     # taper by turns remaining (rough): full prob if 8+ turns, halve at 4, near zero at 1
     if turns_remaining < 8:
         win_prob *= max(0.1, turns_remaining / 8.0)
 
-    cost = estimate_deal_in_cost(threat)
+    cost = estimate_deal_in_cost(threat) if threat is not None else 0.0
     push_ev = win_prob * own_hand_value.points - deal_in_prob * cost
     fold_ev = 0.0
 
@@ -146,9 +150,12 @@ def evaluate_push(
         reasons.append(f"自手一向聽，和了率約 {win_prob*100:.0f}%")
     elif own_shanten == 0:
         reasons.append(f"自手已聽牌，和了率約 {win_prob*100:.0f}%")
-    reasons.append(f"放銃率約 {deal_in_prob*100:.0f}% × 預估失點 {int(cost)}")
     reasons.append(f"和了打點預估 {int(own_hand_value.points)} 點")
-    reasons.append(f"押牌期望值 {push_ev:+.0f} vs 全防 0")
+    if threat is not None:
+        reasons.append(f"放銃率約 {deal_in_prob*100:.0f}% × 預估失點 {int(cost)}")
+        reasons.append(f"押牌期望值 {push_ev:+.0f} vs 全防 0")
+    else:
+        reasons.append(f"進攻期望值 {push_ev:+.0f} (場上無威脅)")
 
     return PushFoldDecision(
         tile=assessment.tile,

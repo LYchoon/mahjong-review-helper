@@ -46,6 +46,7 @@ class HeroState:
     round_wind: int = 27  # E
     seat_wind: int = 27  # default E; analyzer derives proper value when given
     own_discards: list[Tile] = field(default_factory=list)  # for furiten detection
+    meld_tiles: list[Tile] = field(default_factory=list)  # flattened own open melds
 
 
 @dataclass
@@ -64,6 +65,9 @@ class AlternativeOption:
     yaku_tags: list[str]
 
 
+DecisionType = Literal["defense", "efficiency"]
+
+
 @dataclass
 class DecisionReview:
     situation: str
@@ -74,6 +78,7 @@ class DecisionReview:
     alternatives: list[AlternativeOption]
     label: Label
     summary: str
+    decision_type: DecisionType = "defense"
 
 
 def review_decision(
@@ -82,13 +87,20 @@ def review_decision(
     threats: list[Threat],
     visible_counts: list[int],
 ) -> DecisionReview:
-    """Produce a full review for a single discard choice."""
+    """Produce a full review for a single discard choice.
+
+    With threats present this is a push/fold defense review; with no threats it
+    becomes a pure efficiency review (shanten / ukeire / hand value).
+    """
     expected = 14 - 3 * hero.melds_count
     if len(hero.hand) not in (expected, expected - 1):
         raise ValueError(
             f"hand must have {expected - 1} or {expected} tiles "
             f"with {hero.melds_count} melds, got {len(hero.hand)}"
         )
+
+    if not threats:
+        return _review_efficiency(chosen_discard, hero, visible_counts)
 
     primary = _pick_primary_threat(threats, hero.hand, visible_counts, hero.round_wind)
 
@@ -127,7 +139,80 @@ def review_decision(
         alternatives=[o for o, _ in options],
         label=label,
         summary=_summarise(label, your_opt, best_opt, ev_gap),
+        decision_type="defense",
     )
+
+
+def _review_efficiency(
+    chosen_discard: Tile,
+    hero: HeroState,
+    visible_counts: list[int],
+) -> DecisionReview:
+    """No-threat review: rank discards purely by hand advancement value."""
+    options: list[tuple[AlternativeOption, PushFoldDecision]] = []
+    seen: set[int] = set()
+    for t in hero.hand:
+        if t.tid in seen:
+            continue
+        seen.add(t.tid)
+        assessment = DangerAssessment(t, 0.0, [])
+        opt, decision = _evaluate_discard_option(assessment, hero, None, visible_counts)
+        options.append((opt, decision))
+
+    options.sort(key=lambda od: (-od[1].push_ev, od[0].shanten_after, -od[0].ukeire))
+    best_opt, best_decision = options[0]
+    your_opt, your_decision = next(
+        (od for od in options if od[0].tile.tid == chosen_discard.tid),
+        options[-1],
+    )
+
+    ev_gap = best_decision.push_ev - your_decision.push_ev
+    label = _classify(ev_gap, your_opt, best_opt)
+
+    return DecisionReview(
+        situation=f"第 {hero.turn} 巡，場上無威脅 — 進攻效率分析",
+        your_choice=your_opt,
+        your_decision=your_decision,
+        recommendation=best_opt,
+        recommendation_decision=best_decision,
+        alternatives=[o for o, _ in options],
+        label=label,
+        summary=_summarise_efficiency(label, your_opt, best_opt, ev_gap),
+        decision_type="efficiency",
+    )
+
+
+def _summarise_efficiency(
+    label: Label,
+    your_opt: AlternativeOption,
+    best_opt: AlternativeOption,
+    ev_gap: float,
+) -> str:
+    def shape(opt: AlternativeOption) -> str:
+        parts = [f"切後{_shanten_word(opt.shanten_after)}"]
+        if opt.ukeire > 0:
+            parts.append(f"進張 {opt.ukeire} 枚")
+        return "、".join(parts)
+
+    if label == "best":
+        return f"打 {your_opt.tile} 是效率最佳選擇 ({shape(your_opt)})。"
+    if label == "good":
+        return (
+            f"打 {your_opt.tile} 不差 ({shape(your_opt)})，"
+            f"但 {best_opt.tile} 略優 ({shape(best_opt)}，期望值差 {ev_gap:+.0f})。"
+        )
+    return (
+        f"打 {your_opt.tile} 拖慢了手牌 ({shape(your_opt)})；"
+        f"建議改打 {best_opt.tile} ({shape(best_opt)})，期望值多 {ev_gap:.0f}。"
+    )
+
+
+def _shanten_word(sh: int) -> str:
+    if sh < 0:
+        return "已和"
+    if sh == 0:
+        return "聽牌"
+    return f"{sh} 向聽"
 
 
 def _combined_assessment(
@@ -190,7 +275,7 @@ def _pick_primary_threat(
 def _evaluate_discard_option(
     assessment: DangerAssessment,
     hero: HeroState,
-    threat: Threat,
+    threat: Threat | None,
     visible_counts: list[int],
 ) -> tuple[AlternativeOption, PushFoldDecision]:
     after_hand = _hand_without(hero.hand, assessment.tile)
@@ -215,6 +300,7 @@ def _evaluate_discard_option(
         seat_wind_tid=hero.seat_wind,
         dora_count=hero.dora_count,
         likely_to_riichi=(hero.melds_count == 0 and sh <= 1),
+        meld_tiles=hero.meld_tiles,
     )
     value = estimate_hand_value(han_est, is_dealer=hero.is_dealer)
 
@@ -242,11 +328,14 @@ def _evaluate_discard_option(
             decision.reasons.append("振聽 — 待牌在自家河中，榮和不可 (只能自摸)")
 
     # future safety: count tiles still in hand whose danger is ≤30
-    future_safe = sum(
-        1
-        for t in after_hand
-        if assess_tile(t, threat, visible_counts, hero.round_wind).score <= 30
-    )
+    if threat is None:
+        future_safe = len(after_hand)
+    else:
+        future_safe = sum(
+            1
+            for t in after_hand
+            if assess_tile(t, threat, visible_counts, hero.round_wind).score <= 30
+        )
 
     opt = AlternativeOption(
         tile=assessment.tile,
@@ -358,6 +447,8 @@ class GameSummary:
     total_ev_lost: float = 0.0
     biggest_blunder: DecisionReview | None = None
     biggest_blunder_index: int | None = None
+    defense_total: int = 0
+    efficiency_total: int = 0
 
     @property
     def accuracy(self) -> float:
@@ -381,6 +472,10 @@ def summarise_game(reviews: list[DecisionReview]) -> GameSummary:
     for i, r in enumerate(reviews):
         bucket = getattr(summary, r.label)
         setattr(summary, r.label, bucket + 1)
+        if r.decision_type == "defense":
+            summary.defense_total += 1
+        else:
+            summary.efficiency_total += 1
         gap = r.recommendation_decision.push_ev - r.your_decision.push_ev
         summary.total_ev_lost += max(0.0, gap)
         if gap > biggest_gap:
