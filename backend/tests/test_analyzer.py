@@ -42,3 +42,44 @@ def test_picking_genbutsu_is_best():
     hero = HeroState(seat=0, hand=hand, turn=6, turns_remaining=10)
     review = review_decision(Tile.from_str("1z"), hero, [threat], visible)
     assert review.label in ("best", "good")
+
+
+def test_furiten_reduces_win_probability():
+    # Hand: 234m 567p 234s 678s 1z 9m — discarding 9m leaves a 1z tanki tenpai.
+    # If our own pond already contains 1z, that wait is furiten.
+    hand = tiles_from_str("234m 567p 234s 678s 1z 9m")
+    threat = Threat(
+        player=1,
+        kind=ThreatKind.RIICHI,
+        declared_turn=4,
+        discards=tiles_from_str("2p 8m"),
+        discards_after_threat=tiles_from_str("2p"),
+    )
+    visible = _visible_from(hand, threat.discards)
+    base = HeroState(seat=0, hand=hand, turn=6, turns_remaining=10)
+    clean = review_decision(Tile.from_str("9m"), base, [threat], visible)
+
+    furiten_hero = HeroState(
+        seat=0, hand=hand, turn=6, turns_remaining=10,
+        own_discards=tiles_from_str("1z"),
+    )
+    furiten = review_decision(Tile.from_str("9m"), furiten_hero, [threat], visible)
+
+    assert furiten.your_decision.win_prob < clean.your_decision.win_prob
+    assert any("振聽" in r for r in furiten.your_decision.reasons)
+
+
+def test_melded_hand_is_reviewable():
+    # 1 meld → 11-tile concealed hand (pre-discard) must be accepted.
+    hand = tiles_from_str("234m 567p 22s 1z 5m")
+    threat = Threat(
+        player=1,
+        kind=ThreatKind.RIICHI,
+        declared_turn=4,
+        discards=tiles_from_str("1z 9p"),
+        discards_after_threat=tiles_from_str("1z"),
+    )
+    visible = _visible_from(hand, threat.discards)
+    hero = HeroState(seat=0, hand=hand, melds_count=1, turn=6, turns_remaining=10)
+    review = review_decision(Tile.from_str("1z"), hero, [threat], visible)
+    assert review.your_choice.danger == 0.0

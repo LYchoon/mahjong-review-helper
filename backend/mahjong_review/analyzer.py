@@ -15,7 +15,7 @@ Output: best > good > inaccuracy > mistake > blunder labels with concrete reason
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from .danger import (
@@ -45,6 +45,7 @@ class HeroState:
     turns_remaining: int = 10
     round_wind: int = 27  # E
     seat_wind: int = 27  # default E; analyzer derives proper value when given
+    own_discards: list[Tile] = field(default_factory=list)  # for furiten detection
 
 
 @dataclass
@@ -82,8 +83,12 @@ def review_decision(
     visible_counts: list[int],
 ) -> DecisionReview:
     """Produce a full review for a single discard choice."""
-    if len(hero.hand) not in (13, 14):
-        raise ValueError(f"hand must have 13 or 14 tiles, got {len(hero.hand)}")
+    expected = 14 - 3 * hero.melds_count
+    if len(hero.hand) not in (expected, expected - 1):
+        raise ValueError(
+            f"hand must have {expected - 1} or {expected} tiles "
+            f"with {hero.melds_count} melds, got {len(hero.hand)}"
+        )
 
     primary = _pick_primary_threat(threats, hero.hand, visible_counts, hero.round_wind)
 
@@ -197,6 +202,7 @@ def _evaluate_discard_option(
         effective_ids = [t for t in eff if (4 - visible_counts[t]) > 0]
         ukeire = sum(max(0, 4 - visible_counts[t]) for t in eff)
     else:
+        eff: dict[int, int] = {}
         effective_ids = []
         ukeire = 0
 
@@ -224,6 +230,16 @@ def _evaluate_discard_option(
         decision.reasons.append(
             f"剩餘有效進張 {ukeire} 枚 (調整後和率 {decision.win_prob*100:.1f}%)"
         )
+
+    # hero furiten: tenpai but a winning tile is in our own pond (or is the tile
+    # we are discarding right now) → cannot ron, only tsumo wins
+    if sh == 0 and eff:
+        own_tids = {t.tid for t in hero.own_discards}
+        own_tids.add(assessment.tile.tid)
+        if set(eff) & own_tids:
+            decision.win_prob *= 0.35
+            decision.recompute()
+            decision.reasons.append("振聽 — 待牌在自家河中，榮和不可 (只能自摸)")
 
     # future safety: count tiles still in hand whose danger is ≤30
     future_safe = sum(
