@@ -16,7 +16,9 @@ from ..analyzer import (
     summarise_game,
 )
 from ..danger import Threat, ThreatKind
-from ..parsers.tenhou import Snapshot, parse_tenhou_log
+from ..parsers.common import Snapshot
+from ..parsers.majsoul import parse_majsoul_log
+from ..parsers.tenhou import parse_tenhou_log
 from ..tiles import Tile, tile_counts, tiles_from_str
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,13 @@ app.add_middleware(
 
 class TenhouReviewRequest(BaseModel):
     log: dict[str, Any] = Field(..., description="parsed tenhou JSON log object")
+    hero_seat: int = Field(..., ge=0, le=3)
+
+
+class MajsoulReviewRequest(BaseModel):
+    log: dict[str, Any] | list[Any] = Field(
+        ..., description="decoded majsoul record (protobuf-decoded action list JSON)"
+    )
     hero_seat: int = Field(..., ge=0, le=3)
 
 
@@ -62,6 +71,10 @@ class ManualReviewRequest(BaseModel):
         default="",
         description="all other visible tiles (everyone's discards + dora indicators); "
         "ours is auto-counted from `hand`",
+    )
+    own_discards: str = Field(
+        default="",
+        description="hero's own discard pile, used for furiten detection",
     )
 
 
@@ -190,6 +203,7 @@ def review_manual(req: ManualReviewRequest) -> DecisionReviewOut:
         turn=req.turn,
         turns_remaining=req.turns_remaining,
         round_wind=round_wind_t.tid,
+        own_discards=tiles_from_str(req.own_discards),
     )
     review = review_decision(chosen_t, hero, threats, visible)
     return _serialize_review(review)
@@ -201,7 +215,19 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
         snapshots = parse_tenhou_log(req.log, req.hero_seat)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"tenhou parse failed: {e}") from e
+    return _review_snapshots(snapshots, req.hero_seat)
 
+
+@app.post("/review/majsoul", response_model=TenhouReviewResponse)
+def review_majsoul(req: MajsoulReviewRequest) -> TenhouReviewResponse:
+    try:
+        snapshots = parse_majsoul_log(req.log, req.hero_seat)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"majsoul parse failed: {e}") from e
+    return _review_snapshots(snapshots, req.hero_seat)
+
+
+def _review_snapshots(snapshots: list[Snapshot], hero_seat: int) -> TenhouReviewResponse:
     decisions_out: list[DecisionReviewOut] = []
     reviews: list[DecisionReview] = []
     skipped = 0
@@ -212,11 +238,14 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
             hand=snap.hero_hand,
             melds_count=snap.hero_melds_count,
             dora_count=_count_dora(snap),
-            is_dealer=(req.hero_seat == dealer_seat),
+            is_dealer=(hero_seat == dealer_seat),
             turn=snap.turn,
             turns_remaining=max(1, 18 - snap.turn),
             round_wind=snap.round_wind,
-            seat_wind=27 + ((req.hero_seat - dealer_seat) % 4),
+            seat_wind=27 + ((hero_seat - dealer_seat) % 4),
+            own_discards=(
+                snap.all_discards[snap.hero_seat] if snap.all_discards else []
+            ),
         )
         try:
             review = review_decision(
@@ -236,7 +265,7 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
         decisions_out.append(out)
 
     if skipped:
-        logger.warning("tenhou review: %d/%d snapshots skipped", skipped, len(snapshots))
+        logger.warning("log review: %d/%d snapshots skipped", skipped, len(snapshots))
 
     summary = summarise_game(reviews)
     summary_out = GameSummaryOut(
@@ -252,7 +281,7 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
     )
 
     return TenhouReviewResponse(
-        hero_seat=req.hero_seat, decisions=decisions_out, summary=summary_out
+        hero_seat=hero_seat, decisions=decisions_out, summary=summary_out
     )
 
 
@@ -272,7 +301,11 @@ def _count_dora(snap: Snapshot) -> int:
     return n
 
 
-_ROUND_LABELS = ["東1", "東2", "東3", "東4", "南1", "南2", "南3", "南4"]
+_ROUND_LABELS = [
+    "東1", "東2", "東3", "東4",
+    "南1", "南2", "南3", "南4",
+    "西1", "西2", "西3", "西4",
+]
 
 
 def _board_from_snapshot(snap: Snapshot) -> BoardStateOut:

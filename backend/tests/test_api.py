@@ -130,3 +130,46 @@ def test_tenhou_review_south_round_uses_round_number():
 def test_tenhou_review_rejects_garbage():
     resp = client.post("/review/tenhou", json={"log": {"log": [[1, 2]]}, "hero_seat": 0})
     assert resp.status_code == 400
+
+
+def _msact(name, **data):
+    return {"name": f".lq.Record{name}", "data": data}
+
+
+def test_majsoul_review_endpoint():
+    hands = {
+        0: ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "1p", "2p", "3p", "5s", "5z"],
+        1: ["1s", "2s", "3s", "4p", "5p", "6p", "7p", "8p", "9p", "2z", "2z", "3z", "3z"],
+        2: ["4s", "5s", "6s", "1m", "2m", "3m", "4m", "5m", "6m", "4z", "4z", "5z", "5z"],
+        3: ["7s", "8s", "9s", "1p", "2p", "3p", "4p", "5p", "6p", "6z", "6z", "7z", "7z"],
+    }
+    log = {
+        "head": {"uuid": "test"},
+        "data": [
+            _msact(
+                "NewRound",
+                chang=1, ju=0, ben=0, liqibang=0, doras=["1z"],
+                **{f"tiles{s}": t for s, t in hands.items()},
+            ),
+            _msact("DiscardTile", seat=0, tile="5z"),
+            _msact("DealTile", seat=1, tile="4z"),
+            _msact("DiscardTile", seat=1, tile="4z", is_liqi=True),
+            _msact("DealTile", seat=2, tile="9m"),
+            _msact("DiscardTile", seat=2, tile="9m"),
+            _msact("DealTile", seat=3, tile="9p"),
+            _msact("DiscardTile", seat=3, tile="9p"),
+            _msact("DealTile", seat=0, tile="6s"),
+            _msact("DiscardTile", seat=0, tile="6s"),
+            _msact("NoTile"),
+        ],
+    }
+    resp = client.post("/review/majsoul", json={"log": log, "hero_seat": 0})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["summary"]["total"] == 1
+    assert body["decisions"][0]["board"]["round_label"] == "南1"
+
+
+def test_majsoul_review_rejects_garbage():
+    resp = client.post("/review/majsoul", json={"log": {"foo": "bar"}, "hero_seat": 0})
+    assert resp.status_code == 400
