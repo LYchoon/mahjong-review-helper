@@ -74,8 +74,9 @@
 
 ```bash
 cd backend
-uv sync
-uv run pytest                                       # 38 tests, 全綠
+uv sync --extra dev                                  # dev extra 含 pytest / ruff / httpx
+uv run pytest                                        # 51 tests, 全綠
+uv run ruff check .
 uv run uvicorn mahjong_review.api.main:app --reload  # http://localhost:8000
 ```
 
@@ -86,6 +87,9 @@ cd frontend
 npm install
 npm run dev    # http://localhost:3000
 ```
+
+前端預設連 `http://localhost:8000` 的後端；若後端跑在別的位址,設定環境變數
+`NEXT_PUBLIC_API_BASE`(例如 `NEXT_PUBLIC_API_BASE=http://192.168.1.10:8000 npm run dev`)。
 
 ### 兩種模式
 
@@ -133,6 +137,7 @@ frontend/
 
 sample_logs/
   riichi_defense_demo.json  # 合成範例對局 (下家 T4 立直，hero 連續押 5 張)
+                            # 前端實際載入的是 frontend/public/sample/ 下的同名副本
 ```
 
 ## API 端點

@@ -235,9 +235,10 @@ export default function Page() {
       setLogJson(text);
       await runTenhou(text);
     } catch (e: unknown) {
-      // network fetch may fail in static export; fall back to embedded sample
       setErr(
-        "找不到範例檔 (可能後端未啟動或 public/ 未提供)；請手動貼入牌譜 JSON。"
+        e instanceof Error
+          ? `載入範例失敗：${e.message}`
+          : "載入範例失敗；請手動貼入牌譜 JSON。"
       );
     } finally {
       setBusy(false);
