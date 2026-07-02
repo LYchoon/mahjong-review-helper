@@ -1,5 +1,7 @@
 "use client";
 
+import { useMemo } from "react";
+
 import type { Alternative } from "@/lib/api";
 import { dangerRingClass } from "@/lib/severity";
 import { DangerBar } from "./DangerBar";
@@ -19,7 +21,10 @@ export function HandSafetyView({
   chosenTile: string;
   recommendedTile: string;
 }) {
-  const sorted = [...alternatives].sort((a, b) => a.danger - b.danger);
+  const sorted = useMemo(
+    () => [...alternatives].sort((a, b) => a.danger - b.danger),
+    [alternatives]
+  );
   return (
     <div className="bg-stone-900 rounded p-3">
       <div className="text-xs text-stone-400 mb-2">

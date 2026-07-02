@@ -49,8 +49,11 @@ export function GameSummaryCard({
           </div>
         </div>
         <div className="text-right">
-          <div className="text-xs text-stone-400">分析的防守決策數</div>
+          <div className="text-xs text-stone-400">分析的決策數</div>
           <div className="text-2xl font-bold">{summary.total}</div>
+          <div className="text-xs text-stone-500">
+            防守 {summary.defense_total} · 進攻 {summary.efficiency_total}
+          </div>
           <div className="text-xs text-stone-500 mt-1">
             累積期望失分 −{Math.round(summary.total_ev_lost)} 點
           </div>

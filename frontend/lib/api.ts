@@ -41,10 +41,13 @@ export type BoardState = {
   threats: { player: number; kind: string; declared_turn: number }[];
 };
 
+export type DecisionType = "defense" | "efficiency";
+
 export type DecisionReview = {
   situation: string;
   label: DecisionLabel;
   summary: string;
+  decision_type: DecisionType;
   your_choice: Alternative;
   recommendation: Alternative;
   alternatives: Alternative[];
@@ -67,6 +70,8 @@ export type GameSummary = {
   accuracy: number;
   total_ev_lost: number;
   biggest_blunder_index: number | null;
+  defense_total: number;
+  efficiency_total: number;
 };
 
 export type LogReviewResult = {

@@ -69,8 +69,13 @@ export function DecisionNavigator({
                 i === index
                   ? "ring-2 ring-emerald-300"
                   : "opacity-70 hover:opacity-100"
-              } ${d.label === "inaccuracy" ? "text-black" : "text-white"}`}
-              title={`#${i + 1} ${d.label}`}
+              } ${d.label === "inaccuracy" ? "text-black" : "text-white"} ${
+                d.decision_type === "defense"
+                  ? "border-2 border-red-400/80"
+                  : ""
+              }`}
+              title={`#${i + 1} ${d.label}${d.decision_type === "defense" ? " (防守)" : " (進攻)"}`}
+              aria-label={`決策 ${i + 1}: ${d.label}, ${d.decision_type === "defense" ? "防守" : "進攻"}`}
             >
               {i + 1}
             </button>

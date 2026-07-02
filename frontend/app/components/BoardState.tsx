@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 import type { BoardState } from "@/lib/api";
 import { HONOR_LABEL } from "@/lib/tiles";
 import { Tile } from "./Tile";
@@ -121,7 +123,11 @@ function DiscardPile({
   );
 }
 
-export function BoardStateView({ board }: { board: BoardState }) {
+export const BoardStateView = memo(function BoardStateView({
+  board,
+}: {
+  board: BoardState;
+}) {
   const threatKindBySeat = new Map<number, string>(
     board.threats.map((t) => [t.player, t.kind])
   );
@@ -165,4 +171,4 @@ export function BoardStateView({ board }: { board: BoardState }) {
       </div>
     </div>
   );
-}
+});

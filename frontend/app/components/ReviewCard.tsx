@@ -1,10 +1,13 @@
 "use client";
 
+import { memo } from "react";
+
 import type { Alternative, DecisionReview } from "@/lib/api";
 import { helpFor } from "@/lib/factorHelp";
 import { dangerTextClass, shantenLabel } from "@/lib/severity";
 import { DangerBar, EVBar } from "./DangerBar";
 import { HandSafetyView } from "./HandSafety";
+import { InfoPopover } from "./InfoPopover";
 import { LabelBadge } from "./LabelBadge";
 import { Tile } from "./Tile";
 
@@ -47,21 +50,22 @@ function AlternativeRow({
           <div className="flex flex-wrap gap-1 mt-1">
             {alt.factors.map((f, i) => {
               const help = helpFor(f.code);
-              const title = help
-                ? `${f.code} (${f.delta >= 0 ? "+" : ""}${f.delta})\n\n${help}`
-                : `${f.code}: ${f.delta >= 0 ? "+" : ""}${f.delta}`;
+              const deltaText = `${f.delta >= 0 ? "+" : ""}${f.delta}`;
               return (
-                <span
-                  key={i}
-                  className={`px-1.5 py-0.5 rounded text-[10px] cursor-help ${
+                <InfoPopover
+                  key={`${f.code}-${i}`}
+                  label={f.label}
+                  buttonClass={`px-1.5 py-0.5 rounded text-[10px] cursor-help ${
                     f.delta < 0
                       ? "bg-emerald-900/40 text-emerald-300"
                       : "bg-red-900/40 text-red-300"
                   }`}
-                  title={title}
                 >
-                  {f.label}
-                </span>
+                  <span className="font-mono text-stone-400">
+                    {f.code} ({deltaText})
+                  </span>
+                  {help ? `\n\n${help}` : ""}
+                </InfoPopover>
               );
             })}
           </div>
@@ -145,11 +149,26 @@ function ChoicePanel({
   );
 }
 
-export function ReviewCard({ review }: { review: DecisionReview }) {
+export const ReviewCard = memo(function ReviewCard({
+  review,
+}: {
+  review: DecisionReview;
+}) {
   return (
     <div className="bg-stone-800 rounded-lg p-5 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="text-sm text-stone-300">{review.situation}</div>
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+              review.decision_type === "defense"
+                ? "bg-red-900/60 text-red-200"
+                : "bg-sky-900/60 text-sky-200"
+            }`}
+          >
+            {review.decision_type === "defense" ? "防守" : "進攻"}
+          </span>
+          <div className="text-sm text-stone-300">{review.situation}</div>
+        </div>
         <LabelBadge label={review.label} />
       </div>
 
@@ -204,4 +223,4 @@ export function ReviewCard({ review }: { review: DecisionReview }) {
       </details>
     </div>
   );
-}
+});
