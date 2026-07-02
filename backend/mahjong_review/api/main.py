@@ -133,6 +133,8 @@ class CallReviewOut(BaseModel):
     reasons: list[str]
     shanten_before: int
     shanten_after: int
+    ev_call: float = 0.0
+    ev_pass: float = 0.0
 
 
 class DecisionReviewOut(BaseModel):
@@ -293,6 +295,8 @@ def _review_calls(opportunities: list[CallOpportunity]) -> list[CallReviewOut]:
                 reasons=review.reasons,
                 shanten_before=review.shanten_before,
                 shanten_after=review.shanten_after,
+                ev_call=review.ev_call,
+                ev_pass=review.ev_pass,
             )
         )
     return out

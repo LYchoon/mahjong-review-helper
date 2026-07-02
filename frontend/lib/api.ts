@@ -60,6 +60,8 @@ export type CallReview = {
   reasons: string[];
   shanten_before: number;
   shanten_after: number;
+  ev_call: number;
+  ev_pass: number;
 };
 
 export type DecisionReview = {

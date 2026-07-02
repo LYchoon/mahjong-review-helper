@@ -24,11 +24,11 @@ from .danger import (
     Threat,
     assess_tile,
 )
-from .ev import PushFoldDecision, estimate_hand_value, evaluate_push
+from .ev import WIN_PROB_BY_SHANTEN, PushFoldDecision, estimate_hand_value, evaluate_push
 from .hand_value import quick_yaku_han
 from .parsers.common import CallOpportunity
 from .shanten import effective_tiles, shanten
-from .tiles import Tile
+from .tiles import Tile, tile_counts
 
 Label = Literal["best", "good", "inaccuracy", "mistake", "blunder"]
 
@@ -580,6 +580,8 @@ class CallReview:
     reasons: list[str]
     shanten_before: int
     shanten_after: int  # best shanten reachable by calling (then discarding)
+    ev_call: float = 0.0  # rough EV of the calling line
+    ev_pass: float = 0.0  # rough EV of staying closed/passing
 
 
 def review_call(opp: CallOpportunity, seat_wind: int = 27) -> CallReview | None:
@@ -614,7 +616,8 @@ def review_call(opp: CallOpportunity, seat_wind: int = 27) -> CallReview | None:
     if not variants:
         return None
 
-    best: tuple[int, int, str, bool] | None = None  # (shanten, no_yaku, kind, has_yaku)
+    # (shanten, no_yaku, kind, has_yaku, after_hand, call_han)
+    best: tuple[int, int, str, bool, list[Tile], int] | None = None
     for kind, used in variants:
         remaining = list(hand)
         for u in used:
@@ -634,7 +637,7 @@ def review_call(opp: CallOpportunity, seat_wind: int = 27) -> CallReview | None:
                 best_after = after
         if best_after is None:
             continue
-        _, tags = quick_yaku_han(
+        call_han, tags = quick_yaku_han(
             best_after,
             melds_count=m + 1,
             round_wind_tid=opp.round_wind,
@@ -643,32 +646,50 @@ def review_call(opp: CallOpportunity, seat_wind: int = 27) -> CallReview | None:
             meld_tiles=opp.hero_meld_tiles + used + [tile],
         )
         has_yaku = _has_real_yaku(tags)
-        cand = (best_sh, 0 if has_yaku else 1, kind, has_yaku)
+        cand = (best_sh, 0 if has_yaku else 1, kind, has_yaku, best_after, call_han)
         if best is None or cand[:2] < best[:2]:
             best = cand
     if best is None:
         return None
-    sh_after, _, kind, has_yaku = best
+    sh_after, _, kind, has_yaku, call_after, call_han = best
+
+    # quantify both lines: rough EV = win_prob(shanten, ukeire) × hand value
+    pass_han, _ = quick_yaku_han(
+        hand,
+        melds_count=m,
+        round_wind_tid=opp.round_wind,
+        seat_wind_tid=seat_wind,
+        likely_to_riichi=(m == 0 and sh_before <= 1),
+        meld_tiles=opp.hero_meld_tiles,
+    )
+    ev_pass = _line_ev(hand, m, sh_before, pass_han)
+    ev_call = _line_ev(call_after, m + 1, sh_after, call_han if has_yaku else 1)
+    if not has_yaku:
+        ev_call = 0.0  # a yaku-less open hand cannot win
 
     yakuhai_tids = {31, 32, 33, opp.round_wind, seat_wind}
     is_yakuhai_pon = kind == "pon" and tile.tid in yakuhai_tids
     closed_tenpai = sh_before == 0 and m == 0
 
     reasons: list[str] = []
-    if is_yakuhai_pon and sh_after <= sh_before and not closed_tenpai:
+    if closed_tenpai:
+        recommended = "pass"
+        reasons.append("已是門清聽牌 — 保留立直/門清價值，不需副露")
+    elif not has_yaku:
+        recommended = "pass"
+        reasons.append("鳴了之後沒有確定役 — 副露會斷送立直/門清自摸路線")
+    elif is_yakuhai_pon and sh_after <= sh_before:
         recommended = "call"
         reasons.append(f"碰 {tile} 直接確保役牌役 (向聽 {sh_before} → {sh_after})")
-    elif sh_after < sh_before and has_yaku and not closed_tenpai:
+    elif ev_call > ev_pass:
         recommended = "call"
-        reasons.append(f"鳴後向聽 {sh_before} → {sh_after}，且仍有確定役")
+        reasons.append(f"鳴後向聽 {sh_before} → {sh_after}，期望值支持鳴牌")
     else:
         recommended = "pass"
-        if closed_tenpai:
-            reasons.append("已是門清聽牌 — 保留立直/門清價值，不需副露")
-        elif not has_yaku:
-            reasons.append("鳴了之後沒有確定役 — 副露會斷送立直/門清自摸路線")
-        else:
-            reasons.append(f"鳴牌不加速 (向聽 {sh_before} → {sh_after})，門清價值更高")
+        reasons.append(
+            f"鳴牌加速有限 (向聽 {sh_before} → {sh_after})，門清線期望值更高"
+        )
+    reasons.append(f"鳴線 EV {ev_call:+.0f} vs 過線 EV {ev_pass:+.0f}")
     if opp.threats_count > 0:
         reasons.append("場上已有威脅，鳴牌前先評估防守")
 
@@ -696,4 +717,22 @@ def review_call(opp: CallOpportunity, seat_wind: int = 27) -> CallReview | None:
         reasons=reasons,
         shanten_before=sh_before,
         shanten_after=sh_after,
+        ev_call=round(ev_call, 0),
+        ev_pass=round(ev_pass, 0),
     )
+
+
+def _line_ev(concealed: list[Tile], melds: int, sh: int, han: int) -> float:
+    """Rough line EV for the call decision: win_prob(shanten, ukeire) × value.
+
+    Uses raw 4-per-type ukeire (no table visibility) — both lines share the
+    same approximation, so the comparison stays fair.
+    """
+    win = WIN_PROB_BY_SHANTEN.get(min(sh, 4), 0.0)
+    if sh > 0 and len(concealed) == 13 - 3 * melds:
+        counts = tile_counts(concealed)
+        eff = effective_tiles(concealed, melds)
+        ukeire = sum(max(0, 4 - counts[t]) for t in eff)
+        if ukeire > 0:
+            win *= min(1.5, max(0.3, ukeire / 8.0))
+    return win * estimate_hand_value(han).points

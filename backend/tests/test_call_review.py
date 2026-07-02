@@ -61,13 +61,28 @@ def test_calling_without_yaku_is_flagged():
     assert any("沒有確定役" in r for r in review.reasons)
 
 
-def test_tanyao_chi_to_tenpai_recommended():
-    # all simples; chi 6m with 45m reaches tenpai and keeps tanyao
-    opp = _opp("45m 46p 567p 456s 88s 2s", "6m", can_chi=True, called=False)
+def test_chi_to_tenpai_recommended_when_already_open():
+    # hero already ponned haku (yaku secured, no closed-hand value left);
+    # chi 6m with 45m reaches tenpai — EV clearly favours calling
+    opp = _opp(
+        "45m 46p 567p 88s 2s", "6m",
+        can_chi=True, called=False, melds=1, meld_tiles="555z",
+    )
     review = review_call(opp)
     assert review is not None
     assert review.shanten_after < review.shanten_before
     assert review.recommended == "call"
+    assert review.ev_call > review.ev_pass
+
+
+def test_closed_iishanten_keeps_riichi_value_over_cheap_chi():
+    # closed 1-shanten with riichi potential vs a 1000-point open tanyao
+    # tenpai: the EV comparison favours staying closed
+    opp = _opp("45m 46p 567p 456s 88s 2s", "6m", can_chi=True, called=False)
+    review = review_call(opp)
+    assert review is not None
+    assert review.recommended == "pass"
+    assert review.ev_pass >= review.ev_call
 
 
 def test_tenhou_parser_records_call_opportunity():

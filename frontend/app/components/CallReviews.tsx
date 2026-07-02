@@ -42,6 +42,11 @@ export function CallReviews({ calls }: { calls: CallReview[] }) {
                   ({shantenLabel(c.shanten_before)} →{" "}
                   {shantenLabel(c.shanten_after)})
                 </span>
+                <span className="text-stone-500 font-mono">
+                  鳴 {c.ev_call >= 0 ? "+" : ""}
+                  {c.ev_call} / 過 {c.ev_pass >= 0 ? "+" : ""}
+                  {c.ev_pass}
+                </span>
                 <LabelBadge label={c.label} />
               </div>
               <ul className="text-xs text-stone-400 space-y-0.5">
