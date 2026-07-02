@@ -107,8 +107,10 @@ def _shanten_standard(counts: list[int], melds_count: int) -> int:
         m = honor_m + suit_m
         p = honor_p + suit_p
 
-        # cap partials: m + p <= sets_needed (+1 for the pair slot if no pair yet)
-        max_partials = sets_needed - m + (0 if has_pair else 1)
+        # cap partials: m + p <= sets_needed. Every candidate final pair is tried
+        # by the outer loop, so the no-pair branch gets no bonus slot — a proto-run
+        # partial can never become the pair (the classic no-pair correction).
+        max_partials = sets_needed - m
         if p > max_partials:
             p = max_partials
 
@@ -116,7 +118,22 @@ def _shanten_standard(counts: list[int], melds_count: int) -> int:
         if sh < best[0]:
             best[0] = sh
 
-    return best[0]
+    result = best[0]
+    if result == 0 and sum(counts) % 3 == 1:
+        # karaten guard: a "tenpai" whose every winning tile is already used up in
+        # our own hand (e.g. 777m triplet + 7m tanki holding all four) is not tenpai
+        if not any(
+            counts[t] < 4 and _wins_with(counts, t, melds_count) for t in range(NUM_TILE_TYPES)
+        ):
+            result = 1
+    return result
+
+
+def _wins_with(counts: list[int], tid: int, melds_count: int) -> bool:
+    counts[tid] += 1
+    won = _shanten_standard(counts, melds_count) == -1
+    counts[tid] -= 1
+    return won
 
 
 @cache

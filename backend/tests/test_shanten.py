@@ -1,4 +1,8 @@
-from mahjong_review.shanten import effective_tiles, shanten
+import random
+
+from mahjong.shanten import Shanten as ReferenceShanten
+
+from mahjong_review.shanten import effective_tiles, shanten, shanten_from_counts
 from mahjong_review.tiles import tiles_from_str
 
 
@@ -53,3 +57,57 @@ def test_effective_tiles_tenpai():
     # the only tile that completes is 1z
     assert 27 in eff
     assert eff[27] == -1
+
+
+def test_no_pair_needs_extra_step():
+    # 1 set + 4 proto-runs, zero pairs: a proto-run can't become the pair,
+    # so this is 3-shanten, not 2 (the classic no-pair correction).
+    hand = tiles_from_str("12346m 139p 1356s 5z")
+    assert shanten(hand) == 3
+
+
+def test_karaten_tanki_is_not_tenpai():
+    # 234m 7777m 567s 678s: "4 sets + 7m tanki" but all four 7m are in our
+    # own hand — the wait is dead, so this is 1-shanten, not tenpai.
+    hand = tiles_from_str("234m 7777m 566778s")
+    assert shanten(hand) == 1
+
+
+def test_fuzz_matches_reference_library():
+    """Seeded fuzz: our shanten must agree with the `mahjong` reference library
+    on random 13-tile hands (uniform and block-structured)."""
+    ref = ReferenceShanten()
+    rng = random.Random(20260702)
+
+    def random_uniform_hand():
+        pool = [i for i in range(34) for _ in range(4)]
+        rng.shuffle(pool)
+        counts = [0] * 34
+        for t in pool[:13]:
+            counts[t] += 1
+        return counts
+
+    def random_structured_hand():
+        counts = [0] * 34
+        while sum(counts) < 13:
+            r = rng.random()
+            space = 13 - sum(counts)
+            if r < 0.4 and space >= 3:
+                s = rng.choice([0, 9, 18]) + rng.randint(0, 6)
+                if all(counts[s + d] < 4 for d in range(3)):
+                    for d in range(3):
+                        counts[s + d] += 1
+            elif r < 0.6 and space >= 2:
+                t = rng.randint(0, 33)
+                if counts[t] <= 2:
+                    counts[t] += 2
+            else:
+                t = rng.randint(0, 33)
+                if counts[t] < 4:
+                    counts[t] += 1
+        return counts
+
+    for gen in (random_uniform_hand, random_structured_hand):
+        for _ in range(1500):
+            counts = gen()
+            assert shanten_from_counts(counts, 0) == ref.calculate_shanten(counts), counts
