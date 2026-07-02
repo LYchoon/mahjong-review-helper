@@ -34,6 +34,16 @@ def shanten_from_counts(counts: list[int], melds_count: int = 0) -> int:
     )
 
 
+def shanten_standard(counts: list[int], melds_count: int = 0) -> int:
+    """Standard-form (4 sets + pair) shanten only."""
+    return _shanten_standard(counts, melds_count)
+
+
+def shanten_chiitoi(counts: list[int]) -> int:
+    """Chiitoitsu-form shanten only."""
+    return _shanten_chiitoi(counts)
+
+
 # ---------- chiitoitsu ----------
 
 
