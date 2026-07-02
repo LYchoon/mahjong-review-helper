@@ -1,6 +1,6 @@
 from mahjong_review.analyzer import HeroState, review_decision
 from mahjong_review.danger import Threat, ThreatKind
-from mahjong_review.tiles import NUM_TILE_TYPES, Tile, tile_counts, tiles_from_str
+from mahjong_review.tiles import Tile, tile_counts, tiles_from_str
 
 
 def _visible_from(hand, *extras):

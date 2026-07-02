@@ -15,21 +15,19 @@ Output: best > good > inaccuracy > mistake > blunder labels with concrete reason
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from .danger import (
     DangerAssessment,
     DangerFactor,
     Threat,
-    ThreatKind,
     assess_tile,
 )
-from .ev import HandValue, PushFoldDecision, estimate_hand_value, evaluate_push
+from .ev import PushFoldDecision, estimate_hand_value, evaluate_push
 from .hand_value import quick_yaku_han
 from .shanten import effective_tiles, shanten
 from .tiles import Tile
-
 
 Label = Literal["best", "good", "inaccuracy", "mistake", "blunder"]
 
@@ -141,8 +139,6 @@ def _combined_assessment(
     for th in threats:
         a = assess_tile(tile, th, visible_counts, round_wind)
         per_threat.append((th, a))
-    if not per_threat:
-        return assess_tile(tile, threats[0], visible_counts, round_wind)
 
     if len(per_threat) == 1:
         return per_threat[0][1]
@@ -345,6 +341,7 @@ class GameSummary:
     blunder: int = 0
     total_ev_lost: float = 0.0
     biggest_blunder: DecisionReview | None = None
+    biggest_blunder_index: int | None = None
 
     @property
     def accuracy(self) -> float:
@@ -365,7 +362,7 @@ class GameSummary:
 def summarise_game(reviews: list[DecisionReview]) -> GameSummary:
     summary = GameSummary(total=len(reviews))
     biggest_gap = 0.0
-    for r in reviews:
+    for i, r in enumerate(reviews):
         bucket = getattr(summary, r.label)
         setattr(summary, r.label, bucket + 1)
         gap = r.recommendation_decision.push_ev - r.your_decision.push_ev
@@ -373,4 +370,5 @@ def summarise_game(reviews: list[DecisionReview]) -> GameSummary:
         if gap > biggest_gap:
             biggest_gap = gap
             summary.biggest_blunder = r
+            summary.biggest_blunder_index = i
     return summary

@@ -11,7 +11,7 @@ each suit. Performance is fine for 13–14 tile hands; not optimised for batch u
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 
 from .tiles import HONORS, NUM_TILE_TYPES, Tile, tile_counts
 
@@ -119,7 +119,7 @@ def _shanten_standard(counts: list[int], melds_count: int) -> int:
     return best[0]
 
 
-@lru_cache(maxsize=None)
+@cache
 def _best_suit_decomposition(c: tuple[int, ...]) -> tuple[int, int]:
     """Return (max complete sets, partials given that set count) for a single suit.
 

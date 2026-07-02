@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+import logging
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -11,15 +11,15 @@ from pydantic import BaseModel, Field
 
 from ..analyzer import (
     DecisionReview,
-    GameSummary,
     HeroState,
     review_decision,
     summarise_game,
 )
 from ..danger import Threat, ThreatKind
 from ..parsers.tenhou import Snapshot, parse_tenhou_log
-from ..shanten import shanten as compute_shanten
 from ..tiles import Tile, tile_counts, tiles_from_str
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Mahjong Review Helper", version="0.1.0")
 
@@ -150,7 +150,7 @@ def review_manual(req: ManualReviewRequest) -> DecisionReviewOut:
         chosen_t = chosen[0]
         round_wind_t = tiles_from_str(req.round_wind_tile)[0]
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     visible = list(tile_counts(hand))
     for t in tiles_from_str(req.visible_tiles):
@@ -160,8 +160,8 @@ def review_manual(req: ManualReviewRequest) -> DecisionReviewOut:
     for tm in req.threats:
         try:
             kind = ThreatKind(tm.kind)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"unknown threat kind {tm.kind}")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"unknown threat kind {tm.kind}") from e
         threats.append(
             Threat(
                 player=tm.player,
@@ -173,6 +173,13 @@ def review_manual(req: ManualReviewRequest) -> DecisionReviewOut:
         )
     if not threats:
         raise HTTPException(status_code=400, detail="defense review requires at least one threat")
+
+    # threat discards are visible tiles too — fold them in so kabe / honor-count
+    # logic sees them (matches what the tenhou parser does automatically)
+    for th in threats:
+        for t in th.discards:
+            if visible[t.tid] < 4:
+                visible[t.tid] += 1
 
     hero = HeroState(
         seat=req.hero_seat,
@@ -193,37 +200,45 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
     try:
         snapshots = parse_tenhou_log(req.log, req.hero_seat)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"tenhou parse failed: {e}")
+        raise HTTPException(status_code=400, detail=f"tenhou parse failed: {e}") from e
 
     decisions_out: list[DecisionReviewOut] = []
     reviews: list[DecisionReview] = []
+    skipped = 0
     for snap in snapshots:
+        dealer_seat = snap.round_number % 4
         hero = HeroState(
             seat=snap.hero_seat,
             hand=snap.hero_hand,
             melds_count=snap.hero_melds_count,
             dora_count=_count_dora(snap),
-            is_dealer=(req.hero_seat == snap.round_index % 4),
+            is_dealer=(req.hero_seat == dealer_seat),
             turn=snap.turn,
             turns_remaining=max(1, 18 - snap.turn),
             round_wind=snap.round_wind,
-            seat_wind=27 + ((req.hero_seat - snap.round_index) % 4),
+            seat_wind=27 + ((req.hero_seat - dealer_seat) % 4),
         )
         try:
             review = review_decision(
                 snap.hero_chosen_discard, hero, snap.threats, snap.visible_counts
             )
         except Exception:
+            skipped += 1
+            logger.exception(
+                "review_decision failed for round_number=%s turn=%s — snapshot skipped",
+                snap.round_number,
+                snap.turn,
+            )
             continue
         reviews.append(review)
         out = _serialize_review(review)
         out.board = _board_from_snapshot(snap)
         decisions_out.append(out)
 
+    if skipped:
+        logger.warning("tenhou review: %d/%d snapshots skipped", skipped, len(snapshots))
+
     summary = summarise_game(reviews)
-    biggest_idx = (
-        reviews.index(summary.biggest_blunder) if summary.biggest_blunder else None
-    )
     summary_out = GameSummaryOut(
         total=summary.total,
         best=summary.best,
@@ -233,7 +248,7 @@ def review_tenhou(req: TenhouReviewRequest) -> TenhouReviewResponse:
         blunder=summary.blunder,
         accuracy=summary.accuracy,
         total_ev_lost=round(summary.total_ev_lost, 0),
-        biggest_blunder_index=biggest_idx,
+        biggest_blunder_index=summary.biggest_blunder_index,
     )
 
     return TenhouReviewResponse(
@@ -262,9 +277,9 @@ _ROUND_LABELS = ["東1", "東2", "東3", "東4", "南1", "南2", "南3", "南4"]
 
 def _board_from_snapshot(snap: Snapshot) -> BoardStateOut:
     return BoardStateOut(
-        round_label=_ROUND_LABELS[snap.round_index]
-        if snap.round_index < len(_ROUND_LABELS)
-        else f"R{snap.round_index + 1}",
+        round_label=_ROUND_LABELS[snap.round_number]
+        if snap.round_number < len(_ROUND_LABELS)
+        else f"R{snap.round_number + 1}",
         turn=snap.turn,
         hero_seat=snap.hero_seat,
         hero_hand=[str(t) for t in snap.hero_hand],

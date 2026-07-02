@@ -69,7 +69,7 @@ class Tile:
         return f"{self.rank}{self.suit}"
 
     @classmethod
-    def from_str(cls, s: str) -> "Tile":
+    def from_str(cls, s: str) -> Tile:
         """Parse '5m', '0p' (red 5p), 'z3' or '3z' (West)."""
         s = s.strip().lower()
         if len(s) != 2:

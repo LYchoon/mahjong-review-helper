@@ -24,12 +24,12 @@ Scores are 0..100, where:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
-from .tiles import HONORS, NUM_TILE_TYPES, Tile, tile_counts
+from .tiles import Tile
 
 
-class ThreatKind(str, Enum):
+class ThreatKind(StrEnum):
     RIICHI = "riichi"
     DAMA_TENPAI = "dama_tenpai"  # heuristic: many calls + late round
     IISHANTEN = "iishanten"
@@ -123,7 +123,7 @@ def assess_tile(
     # --- 2. base by position ---
     if tile.is_honor:
         score = float(_base_honor_danger(tile, visible_counts, round_wind, seat_wind_of_threat))
-        factors.append(DangerFactor("BASE_HONOR", f"字牌基準危險度", score))
+        factors.append(DangerFactor("BASE_HONOR", "字牌基準危險度", score))
     else:
         base = _BASE_DANGER_NUMBER[tile.rank]
         score = float(base)
@@ -205,7 +205,6 @@ def _base_honor_danger(
     visible = visible_counts[tile.tid]
     if visible >= 3:
         return 1.0  # the 4th is essentially safe; can only be shanpon wait with paired honor
-    yakuhai = tile.tid in (round_wind, seat_wind_of_threat) or 30 <= tile.tid <= 33  # ESWN + dragons subset
     is_dragon = tile.tid >= 31
     is_yakuhai_wind = tile.tid in (round_wind, seat_wind_of_threat)
     base = _BASE_DANGER_HONOR
@@ -230,7 +229,6 @@ def _suji_adjustment(tile: Tile, threat: Threat, factors: list[DangerFactor]) ->
     suit = tile.suit
 
     def in_threat_discards(target_rank: int) -> bool:
-        target_tid = (rank - 1) - (rank - target_rank) + _suit_offset(suit)
         target_tid = _suit_offset(suit) + (target_rank - 1)
         return any(t.tid == target_tid for t in threat.discards)
 

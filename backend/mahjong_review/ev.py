@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from .danger import DangerAssessment, Threat, ThreatKind
 from .tiles import Tile
 
-
 WIN_PROB_BY_SHANTEN = {
     -1: 0.95,
     0: 0.30,
@@ -116,7 +115,9 @@ class PushFoldDecision:
 
     def recompute(self) -> None:
         """Re-derive push_ev from current win_prob/deal_in_prob/values."""
-        self.push_ev = self.win_prob * self.hand_value_points - self.deal_in_prob * self.deal_in_cost
+        self.push_ev = (
+            self.win_prob * self.hand_value_points - self.deal_in_prob * self.deal_in_cost
+        )
         self.recommend_push = self.push_ev > self.fold_ev
 
 

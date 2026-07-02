@@ -47,8 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from ..danger import Threat, ThreatKind
-from ..tiles import Tile, tile_counts
-
+from ..tiles import Tile
 
 # --- tile id conversion ---
 
@@ -82,7 +81,8 @@ def _decode_tile_str(s: str) -> Tile:
 class Snapshot:
     """A single hero-discard decision point."""
 
-    round_index: int  # 0-based round number within the log
+    round_index: int  # 0-based position of this round within the log array
+    round_number: int  # tenhou round id: 0..3 = E1..E4, 4..7 = S1..S4 (dealer = number % 4)
     round_wind: int  # 27=E, 28=S, ...
     honba: int
     riichi_sticks: int
@@ -166,12 +166,14 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
 
         # Before active draws, check if any OTHER seat is intercepting with a call
         # (chi/pon/daiminkan) — these appear as strings at the head of their draws.
+        # The marker letter sits before the called tile, so for pon/kan from across
+        # or the right it is NOT the first character (e.g. "41p4141").
         interceptor = None
         for s in range(4):
             if s == active or draw_ptr[s] >= len(draws[s]):
                 continue
             ent = draws[s][draw_ptr[s]]
-            if isinstance(ent, str) and ent[0] in ("c", "p", "m"):
+            if isinstance(ent, str) and any(ch in "cpm" for ch in ent):
                 interceptor = s
                 break
         if interceptor is not None:
@@ -188,57 +190,48 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
         draw_ptr[active] += 1
 
         if isinstance(entry, str):
-            kind = entry[0]
-            tile_codes = _split_call_tiles(entry[1:])
-            tiles_in_call = [_decode_tenhou_tile(c) for c in tile_codes]
+            kind, tile_codes, called_code = _parse_call(entry)
 
-            if kind in ("a", "k"):
-                # Concealed / added kan during own turn — no discard handed out yet here.
-                # Bump visibility for revealed tiles; melds_count += 1 for ankan only.
-                for t in tiles_in_call:
-                    bump_visible(t.tid)
-                if kind == "a":
-                    melds_count[active] += 1
-                    open_melds[active].append(tiles_in_call)
-                elif kind == "k" and open_melds[active]:
-                    # extend the last pon to kan
-                    open_melds[active][-1] = open_melds[active][-1] + tiles_in_call
-                # active stays — they'll draw rinshan next iteration
-                continue
-            else:
-                # chi/pon/daiminkan — out-of-turn intercept
-                for t in tiles_in_call:
-                    bump_visible(t.tid)
-                melds_count[active] += 1
-                open_melds[active].append(tiles_in_call)
-                # active now must discard (no draw — they used the called tile)
-                if disc_ptr[active] >= len(discards[active]):
-                    break
-                _process_discard(
-                    active,
-                    discards,
-                    disc_ptr,
-                    None,
-                    hands,
-                    discard_piles,
-                    discards_after_riichi,
-                    riichi_declared_turn,
-                    turn_counter,
-                    visible_counts,
-                    hero_seat,
-                    snaps,
-                    round_idx,
-                    round_wind,
-                    honba,
-                    riichi_sticks,
-                    melds_count,
-                    dora_inds,
-                    open_melds,
+            if kind in ("a", "k", "m"):
+                # Kan (concealed / added / open). No discard yet — the same player
+                # draws a rinshan tile next iteration and discards after that.
+                _apply_call(
+                    active, kind, tile_codes, called_code,
+                    hands, melds_count, open_melds, visible_counts, hero_seat,
                 )
-                # active stays; if no further interceptor, next iter will find them with no pending draws
-                # and rotate via the fallback. To rotate properly:
-                active = (active + 1) % 4
                 continue
+
+            # chi/pon — out-of-turn intercept; caller must now discard (no draw).
+            _apply_call(
+                active, kind, tile_codes, called_code,
+                hands, melds_count, open_melds, visible_counts, hero_seat,
+            )
+            if disc_ptr[active] >= len(discards[active]):
+                break
+            _process_discard(
+                active,
+                discards,
+                disc_ptr,
+                None,
+                hands,
+                discard_piles,
+                discards_after_riichi,
+                riichi_declared_turn,
+                turn_counter,
+                visible_counts,
+                hero_seat,
+                snaps,
+                round_idx,
+                round_number,
+                round_wind,
+                honba,
+                riichi_sticks,
+                melds_count,
+                dora_inds,
+                open_melds,
+            )
+            active = (active + 1) % 4
+            continue
 
         # normal numeric draw
         drawn_code = int(entry)
@@ -249,7 +242,7 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
         if disc_ptr[active] >= len(discards[active]):
             break
 
-        _process_discard(
+        rotate = _process_discard(
             active,
             discards,
             disc_ptr,
@@ -263,6 +256,7 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
             hero_seat,
             snaps,
             round_idx,
+            round_number,
             round_wind,
             honba,
             riichi_sticks,
@@ -270,7 +264,8 @@ def _parse_round(rnd: list[Any], round_idx: int, hero_seat: int) -> list[Snapsho
             dora_inds,
             open_melds,
         )
-        active = (active + 1) % 4
+        if rotate:
+            active = (active + 1) % 4
 
     return snaps
 
@@ -289,16 +284,18 @@ def _process_discard(
     hero_seat: int,
     snaps: list[Snapshot],
     round_idx: int,
+    round_number: int,
     round_wind: int,
     honba: int,
     riichi_sticks: int,
     melds_count: list[int],
     dora_inds: list[Tile],
     open_melds: list[list[list[Tile]]],
-) -> None:
+) -> bool:
+    """Consume one discard-slot entry. Returns True if the turn should rotate to
+    the next player, False if the same player acts again (kan → rinshan draw)."""
     disc_entry = discards[active][disc_ptr[active]]
     disc_ptr[active] += 1
-    turn_counter[active] += 1
 
     riichi_now = False
     drawn_tile = _decode_tenhou_tile(drawn_code) if drawn_code is not None else None
@@ -306,24 +303,38 @@ def _process_discard(
     if isinstance(disc_entry, str):
         if disc_entry == "60":
             if drawn_tile is None:
-                return
+                return True
             discarded = drawn_tile
         elif disc_entry.startswith("r"):
             riichi_now = True
             tail = disc_entry[1:]
             if tail == "60":
                 if drawn_tile is None:
-                    return
+                    return True
                 discarded = drawn_tile
             else:
                 discarded = _decode_tenhou_tile(int(tail))
-        elif disc_entry[0] in ("c", "p", "m", "a", "k"):
-            # rare — embedded mid-discard call; skip
-            return
+        elif any(ch in "cpmak" for ch in disc_entry):
+            # Kan declared in the discard slot (ankan/kakan take the place of a
+            # discard in tenhou/6 logs). The drawn tile joins the hand, the kan
+            # tiles leave it, and the same player draws rinshan next.
+            if drawn_code is not None:
+                hands[active].append(drawn_code)
+            kind, tile_codes, called_code = _parse_call(disc_entry)
+            _apply_call(
+                active, kind, tile_codes, called_code,
+                hands, melds_count, open_melds, visible_counts, hero_seat,
+            )
+            return False
         else:
-            return
+            # unknown marker — keep the drawn tile so the hand stays consistent
+            if drawn_code is not None:
+                hands[active].append(drawn_code)
+            return True
     else:
         discarded = _decode_tenhou_tile(int(disc_entry))
+
+    turn_counter[active] += 1
 
     # visibility for the discarded tile (own draw already counted at draw time)
     if active != hero_seat:
@@ -351,6 +362,7 @@ def _process_discard(
             snaps.append(
                 Snapshot(
                     round_index=round_idx,
+                    round_number=round_number,
                     round_wind=round_wind,
                     honba=honba,
                     riichi_sticks=riichi_sticks,
@@ -379,14 +391,93 @@ def _process_discard(
 
     if riichi_now:
         riichi_declared_turn[active] = turn_counter[active]
+    return True
 
 
-def _split_call_tiles(s: str) -> list[int]:
-    """Tenhou call strings are sequences of 2-digit tile codes, possibly with a single
-    letter between groups to indicate which slot the called tile is in. We strip non-
-    digits and chunk in 2s."""
-    digits = "".join(ch for ch in s if ch.isdigit())
-    return [int(digits[i : i + 2]) for i in range(0, len(digits), 2)]
+def _parse_call(entry: str) -> tuple[str, list[int], int | None]:
+    """Decode a tenhou call string like "c111213", "41p4141" or "121212a12".
+
+    The marker letter sits directly before the called/added tile; its position in
+    the string encodes which player it came from (irrelevant for our analysis).
+    Returns (kind_letter, all_tile_codes, called_or_added_code).
+    """
+    letter_idx = next((i for i, ch in enumerate(entry) if ch.isalpha()), None)
+    kind = entry[letter_idx] if letter_idx is not None else "?"
+    digits = "".join(ch for ch in entry if ch.isdigit())
+    codes = [int(digits[i : i + 2]) for i in range(0, len(digits), 2)]
+    called: int | None = None
+    if letter_idx is not None:
+        after = entry[letter_idx + 1 : letter_idx + 3]
+        if len(after) == 2 and after.isdigit():
+            called = int(after)
+    return kind, codes, called
+
+
+_RED_TO_PLAIN = {51: 15, 52: 25, 53: 35}
+_PLAIN_TO_RED = {v: k for k, v in _RED_TO_PLAIN.items()}
+
+
+def _remove_code_from_hand(hand: list[int], code: int) -> None:
+    """Remove one tile code from a hand, tolerating red-5 / plain-5 mismatches."""
+    if code in hand:
+        hand.remove(code)
+        return
+    alt = _RED_TO_PLAIN.get(code) or _PLAIN_TO_RED.get(code)
+    if alt is not None and alt in hand:
+        hand.remove(alt)
+
+
+def _apply_call(
+    active: int,
+    kind: str,
+    tile_codes: list[int],
+    called_code: int | None,
+    hands: list[list[int]],
+    melds_count: list[int],
+    open_melds: list[list[list[Tile]]],
+    visible_counts: list[int],
+    hero_seat: int,
+) -> None:
+    """Apply a call (chi/pon/daiminkan/ankan/kakan) to the per-seat state.
+
+    Removes the tiles that came out of the caller's concealed hand, updates meld
+    bookkeeping, and bumps visibility only for newly revealed tiles (the called
+    tile was already visible as a discard; the hero's own tiles are pre-counted).
+    """
+    tiles_in_call = [_decode_tenhou_tile(c) for c in tile_codes]
+
+    if kind == "a":
+        from_hand = list(tile_codes)  # all four tiles come from the hand
+    elif kind == "k":
+        # added kan: only the drawn/added tile leaves the hand
+        from_hand = [called_code] if called_code is not None else tile_codes[-1:]
+    else:
+        # chi/pon/daiminkan: everything except the called tile comes from the hand
+        from_hand = list(tile_codes)
+        if called_code is not None and called_code in from_hand:
+            from_hand.remove(called_code)
+
+    for code in from_hand:
+        _remove_code_from_hand(hands[active], code)
+
+    if active != hero_seat:
+        for code in from_hand:
+            tid = _decode_tenhou_tile(code).tid
+            if visible_counts[tid] < 4:
+                visible_counts[tid] += 1
+
+    if kind == "k":
+        added = _decode_tenhou_tile(called_code if called_code is not None else tile_codes[-1])
+        for meld in open_melds[active]:
+            if len(meld) == 3 and all(t.tid == added.tid for t in meld):
+                meld.append(added)
+                break
+        else:
+            if open_melds[active]:
+                open_melds[active][-1] = open_melds[active][-1] + [added]
+    else:
+        melds_count[active] += 1
+        open_melds[active].append(tiles_in_call)
 
 
 def _encode_tile(t: Tile) -> int:
