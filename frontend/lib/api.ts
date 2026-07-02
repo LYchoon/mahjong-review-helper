@@ -69,6 +69,12 @@ export type GameSummary = {
   biggest_blunder_index: number | null;
 };
 
+export type LogReviewResult = {
+  hero_seat: number;
+  decisions: DecisionReview[];
+  summary: GameSummary;
+};
+
 export type ManualReviewRequest = {
   hand: string;
   chosen_discard: string;
@@ -87,16 +93,22 @@ export type ManualReviewRequest = {
     discards_after_threat: string[];
   }[];
   visible_tiles?: string;
+  own_discards?: string;
 };
 
-export async function reviewManual(
-  req: ManualReviewRequest
-): Promise<DecisionReview> {
-  const r = await fetch(`${API_BASE}/review/manual`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  let r: Response;
+  try {
+    r = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error(
+      `無法連線到後端 (${API_BASE}) — 請確認後端已啟動，或設定 NEXT_PUBLIC_API_BASE。`
+    );
+  }
   if (!r.ok) {
     const err = await r.text();
     throw new Error(`API ${r.status}: ${err}`);
@@ -104,22 +116,42 @@ export async function reviewManual(
   return r.json();
 }
 
-export async function reviewTenhou(
-  log: unknown,
-  heroSeat: number
-): Promise<{
-  hero_seat: number;
-  decisions: DecisionReview[];
-  summary: GameSummary;
-}> {
-  const r = await fetch(`${API_BASE}/review/tenhou`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ log, hero_seat: heroSeat }),
-  });
-  if (!r.ok) {
-    const err = await r.text();
-    throw new Error(`API ${r.status}: ${err}`);
+export function reviewManual(req: ManualReviewRequest): Promise<DecisionReview> {
+  return postJson("/review/manual", req);
+}
+
+export function reviewTenhou(log: unknown, heroSeat: number): Promise<LogReviewResult> {
+  return postJson("/review/tenhou", { log, hero_seat: heroSeat });
+}
+
+export function reviewMajsoul(log: unknown, heroSeat: number): Promise<LogReviewResult> {
+  return postJson("/review/majsoul", { log, hero_seat: heroSeat });
+}
+
+export type LogFormat = "tenhou" | "majsoul";
+
+/** Sniff whether a parsed log JSON is tenhou (tenhou.net/6) or a decoded majsoul record. */
+export function detectLogFormat(parsed: unknown): LogFormat | null {
+  if (Array.isArray(parsed)) {
+    return looksLikeMajsoulActions(parsed) ? "majsoul" : null;
   }
-  return r.json();
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const obj = parsed as Record<string, unknown>;
+  if (Array.isArray(obj.log)) return "tenhou";
+  for (const key of ["data", "record", "actions"]) {
+    if (Array.isArray(obj[key]) && looksLikeMajsoulActions(obj[key] as unknown[])) {
+      return "majsoul";
+    }
+  }
+  return null;
+}
+
+function looksLikeMajsoulActions(entries: unknown[]): boolean {
+  return entries.some(
+    (e) =>
+      typeof e === "object" &&
+      e !== null &&
+      typeof (e as Record<string, unknown>).name === "string" &&
+      ((e as Record<string, unknown>).name as string).includes("Record")
+  );
 }

@@ -53,6 +53,7 @@ export function DecisionNavigator({
         <button
           onClick={() => onIndexChange(Math.max(0, index - 1))}
           disabled={index === 0}
+          aria-label="上一個決策"
           className="px-3 py-1 rounded bg-stone-700 disabled:opacity-30 text-sm shrink-0"
         >
           ←
@@ -78,6 +79,7 @@ export function DecisionNavigator({
         <button
           onClick={() => onIndexChange(Math.min(decisions.length - 1, index + 1))}
           disabled={index === decisions.length - 1}
+          aria-label="下一個決策"
           className="px-3 py-1 rounded bg-stone-700 disabled:opacity-30 text-sm shrink-0"
         >
           →

@@ -1,5 +1,7 @@
 "use client";
 
+import { dangerBgClass } from "@/lib/severity";
+
 /** A horizontal bar showing danger score 0..100 with a colour gradient. */
 export function DangerBar({
   score,
@@ -9,17 +11,7 @@ export function DangerBar({
   height?: string;
 }) {
   const clamped = Math.max(0, Math.min(100, score));
-  // colour bands: 0=green, 35=yellow, 55=orange, 80=red
-  const color =
-    clamped <= 15
-      ? "bg-best"
-      : clamped <= 35
-        ? "bg-good"
-        : clamped <= 55
-          ? "bg-inaccuracy"
-          : clamped <= 80
-            ? "bg-mistake"
-            : "bg-blunder";
+  const color = dangerBgClass(clamped);
   return (
     <div className={`relative bg-stone-700 rounded-full overflow-hidden ${height} w-full`}>
       <div

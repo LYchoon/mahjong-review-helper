@@ -1,14 +1,7 @@
 "use client";
 
 import type { GameSummary } from "@/lib/api";
-
-function accuracyColor(a: number): string {
-  if (a >= 90) return "text-best";
-  if (a >= 75) return "text-good";
-  if (a >= 60) return "text-inaccuracy";
-  if (a >= 40) return "text-mistake";
-  return "text-blunder";
-}
+import { accuracyTextClass } from "@/lib/severity";
 
 function Stat({
   count,
@@ -50,7 +43,7 @@ export function GameSummaryCard({
           <div className="text-xs text-stone-400 uppercase tracking-wide">
             防守準確率
           </div>
-          <div className={`text-4xl font-bold ${accuracyColor(summary.accuracy)}`}>
+          <div className={`text-4xl font-bold ${accuracyTextClass(summary.accuracy)}`}>
             {summary.accuracy.toFixed(1)}
             <span className="text-lg text-stone-500">%</span>
           </div>

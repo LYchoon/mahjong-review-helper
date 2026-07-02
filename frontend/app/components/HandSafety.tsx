@@ -1,17 +1,9 @@
 "use client";
 
 import type { Alternative } from "@/lib/api";
+import { dangerRingClass } from "@/lib/severity";
 import { DangerBar } from "./DangerBar";
 import { Tile } from "./Tile";
-
-function rankClass(score: number): string {
-  if (score <= 0) return "ring-2 ring-best";
-  if (score <= 15) return "ring-1 ring-best";
-  if (score <= 35) return "ring-1 ring-good";
-  if (score <= 55) return "ring-1 ring-inaccuracy";
-  if (score <= 80) return "ring-1 ring-mistake";
-  return "ring-2 ring-blunder";
-}
 
 /**
  * Visualize danger per tile in the hand. Takes the sorted alternatives list
@@ -39,7 +31,7 @@ export function HandSafetyView({
           const isRecommended = alt.tile === recommendedTile;
           return (
             <div key={alt.tile} className="flex flex-col items-center gap-1">
-              <div className={`rounded ${rankClass(alt.danger)}`}>
+              <div className={`rounded ${dangerRingClass(alt.danger)}`}>
                 <Tile
                   notation={alt.tile}
                   size="sm"

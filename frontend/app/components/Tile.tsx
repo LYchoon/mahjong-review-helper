@@ -1,19 +1,6 @@
 "use client";
 
-const SUIT_LABEL: Record<string, string> = {
-  m: "萬",
-  p: "筒",
-  s: "索",
-};
-const HONOR_LABEL: Record<string, string> = {
-  "1z": "東",
-  "2z": "南",
-  "3z": "西",
-  "4z": "北",
-  "5z": "白",
-  "6z": "發",
-  "7z": "中",
-};
+import { HONOR_LABEL, SUIT_LABEL } from "@/lib/tiles";
 
 export function Tile({
   notation,

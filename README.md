@@ -66,7 +66,8 @@
 ## 牌譜支援
 
 - **天鳳 JSON (tenhou.net/6/)** — 完整支援，包含鳴牌中斷、立直、暗槓/加槓
-- **雀魂牌譜** — 請用 `majsoul-paipu-tools` 等工具先轉成天鳳格式
+- **雀魂牌譜** — 支援工具解碼後的 record JSON(`.lq.Record*` action 流,
+  mjsoul-paipu-downloader、amae-koromo 系工具的輸出格式);前端自動辨識格式
 
 ## 使用方式
 
@@ -75,7 +76,7 @@
 ```bash
 cd backend
 uv sync --extra dev                                  # dev extra 含 pytest / ruff / httpx
-uv run pytest                                        # 51 tests, 全綠
+uv run pytest                                        # 63 tests, 全綠
 uv run ruff check .
 uv run uvicorn mahjong_review.api.main:app --reload  # http://localhost:8000
 ```
@@ -115,8 +116,9 @@ backend/
     ev.py            # 押牌期望值 / 放銃成本
     analyzer.py      # 決策整合 + chess.com 評級
     parsers/
+      common.py      # Snapshot 與威脅判定 (parser 共用)
       tenhou.py      # 天鳳 JSON 解析 (含鳴牌處理)
-      majsoul.py     # 雀魂 (stub — 需 protobuf)
+      majsoul.py     # 雀魂解碼後 record JSON 解析
     api/main.py      # FastAPI 端點
 
 frontend/
@@ -143,7 +145,8 @@ sample_logs/
 ## API 端點
 
 - `POST /review/manual` — 單一決策分析 (手動輸入)
-- `POST /review/tenhou` — 整局牌譜分析 (回傳 summary + decisions[])
+- `POST /review/tenhou` — 整局天鳳牌譜分析 (回傳 summary + decisions[])
+- `POST /review/majsoul` — 整局雀魂牌譜分析 (同上，吃解碼後的 record JSON)
 - `GET  /health` — 健康檢查
 
 ## 未來方向
@@ -152,5 +155,6 @@ sample_logs/
 - 切牌效率分析 (非防守決策)
 - 鳴牌判斷
 - 立直判斷 (時機 / 默聽 vs 立直)
-- Majsoul protobuf parser
+- Majsoul 原生 protobuf 直接解析 (目前吃工具解碼後的 JSON)
 - 跨多局統計儀表板
+- 役種估算擴充 (染手/平和/三色等目前未計入打點)

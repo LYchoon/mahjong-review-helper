@@ -2,25 +2,11 @@
 
 import type { Alternative, DecisionReview } from "@/lib/api";
 import { helpFor } from "@/lib/factorHelp";
+import { dangerTextClass, shantenLabel } from "@/lib/severity";
 import { DangerBar, EVBar } from "./DangerBar";
 import { HandSafetyView } from "./HandSafety";
 import { LabelBadge } from "./LabelBadge";
 import { Tile } from "./Tile";
-
-function dangerColor(score: number): string {
-  if (score <= 0) return "text-best";
-  if (score <= 15) return "text-best";
-  if (score <= 35) return "text-good";
-  if (score <= 55) return "text-inaccuracy";
-  if (score <= 80) return "text-mistake";
-  return "text-blunder";
-}
-
-function shantenLabel(sh: number): string {
-  if (sh < 0) return "已和";
-  if (sh === 0) return "聽牌";
-  return `${sh} 向聽`;
-}
 
 function AlternativeRow({
   alt,
@@ -34,7 +20,7 @@ function AlternativeRow({
       <Tile notation={alt.tile} size="sm" highlight={variant} />
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap">
-          <span className={`font-mono font-semibold ${dangerColor(alt.danger)}`}>
+          <span className={`font-mono font-semibold ${dangerTextClass(alt.danger)}`}>
             危險 {alt.danger}
           </span>
           <span className="text-xs text-stone-400">{alt.verdict}</span>
@@ -106,7 +92,7 @@ function ChoicePanel({
       <div className="flex items-center gap-3 mb-2">
         <Tile notation={alt.tile} size="md" highlight={variant} />
         <div className="min-w-0 flex-1">
-          <div className={`font-mono ${dangerColor(alt.danger)}`}>
+          <div className={`font-mono ${dangerTextClass(alt.danger)}`}>
             危險 {alt.danger} · {alt.verdict}
           </div>
           <div className="text-xs text-stone-400">

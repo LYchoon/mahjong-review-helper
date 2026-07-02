@@ -1,18 +1,8 @@
 "use client";
 
+import type { BoardState } from "@/lib/api";
+import { HONOR_LABEL } from "@/lib/tiles";
 import { Tile } from "./Tile";
-
-type BoardState = {
-  round_label: string;
-  turn: number;
-  hero_seat: number;
-  hero_hand: string[];
-  discards: string[][];
-  open_melds: string[][][];
-  riichi_turns: (number | null)[];
-  dora_indicators: string[];
-  threats: { player: number; kind: string; declared_turn: number }[];
-};
 
 const SEAT_NAME = ["東", "南", "西", "北"];
 
@@ -22,24 +12,14 @@ const THREAT_LABEL: Record<string, { text: string; cls: string }> = {
   iishanten: { text: "一向聽", cls: "bg-purple-500 text-white" },
 };
 
-const YAKUHAI_LABEL: Record<string, string> = {
-  "5z": "白",
-  "6z": "發",
-  "7z": "中",
-  "1z": "東",
-  "2z": "南",
-  "3z": "西",
-  "4z": "北",
-};
-
 function YakuhaiBadges({ melds }: { melds: string[][] }) {
   const yakuhaiTags: string[] = [];
   for (const meld of melds) {
     if (meld.length < 3) continue;
     const tile = meld[0];
     const counts = meld.filter((t) => t === tile).length;
-    if (counts >= 3 && YAKUHAI_LABEL[tile]) {
-      yakuhaiTags.push(YAKUHAI_LABEL[tile]);
+    if (counts >= 3 && HONOR_LABEL[tile]) {
+      yakuhaiTags.push(HONOR_LABEL[tile]);
     }
   }
   if (!yakuhaiTags.length) return null;
