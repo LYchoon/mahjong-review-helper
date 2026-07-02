@@ -53,27 +53,36 @@ def quick_yaku_han(
         # tsumo: ~25% of wins are tsumo for closed hands, adds 1 han
         han_frac += 0.25
         tags.append("+0.25 (tsumo 期望)")
+        # uradora: a riichi win reveals ura indicators, worth ~0.5 han on average
+        han_frac += 0.5
+        tags.append("+0.5 (裏寶期望)")
 
     # chiitoitsu: closed hand progressing toward seven pairs
     if chiitoi_line:
         han_int += 2
         tags.append("七對子路線")
 
-    # yakuhai
+    # yakuhai — a double wind (round wind == seat wind) is worth 2 han
     yakuhai_tids = {31, 32, 33}  # haku/hatsu/chun
     if round_wind_tid in HONORS:
         yakuhai_tids.add(round_wind_tid)
     if seat_wind_tid in HONORS:
         yakuhai_tids.add(seat_wind_tid)
     meld_counts = tile_counts(meld_tiles) if meld_tiles else None
-    for tid in yakuhai_tids:
+    for tid in sorted(yakuhai_tids):
+        weight = (
+            (1 if tid >= 31 else 0)
+            + (1 if tid == round_wind_tid else 0)
+            + (1 if tid == seat_wind_tid else 0)
+        )
         held = counts[tid] + (meld_counts[tid] if meld_counts else 0)
         if held >= 3 and not chiitoi_line:
-            han_int += 1
-            tags.append(f"役牌×3 ({_honor_name(tid)})")
+            han_int += weight
+            suffix = " 連風" if weight == 2 else ""
+            tags.append(f"役牌×3 ({_honor_name(tid)}{suffix})")
         elif counts[tid] == 2 and not chiitoi_line:
-            han_frac += 0.4
-            tags.append(f"+0.4 (役牌候補 {_honor_name(tid)} 對子)")
+            han_frac += 0.4 * weight
+            tags.append(f"+{0.4 * weight:.1f} (役牌候補 {_honor_name(tid)} 對子)")
 
     # tanyao — melded yaochuu tiles kill it too
     yaochuu = set(HONORS) | {0, 8, 9, 17, 18, 26}
@@ -86,6 +95,22 @@ def quick_yaku_han(
     if flush_han:
         han_int += flush_han
         tags.append(flush_tag)
+
+    # run-based yaku (mutually exclusive with the chiitoi line)
+    if not chiitoi_line:
+        all_counts = tile_counts(all_tiles)
+        if _has_ittsu(all_counts):
+            han_int += 2 if closed else 1
+            tags.append("一通")
+        if _has_sanshoku(all_counts):
+            han_int += 2 if closed else 1
+            tags.append("三色")
+        if closed and _has_iipeiko(counts):
+            han_int += 1
+            tags.append("一盃口")
+        if closed and _pinfu_possible(counts):
+            han_frac += 0.3
+            tags.append("+0.3 (平和可能)")
 
     # toitoi: all melds are triplets/quads and the concealed part has no
     # run material (no two tiles at distance 1-2 within a suit)
@@ -125,6 +150,42 @@ def _flush_value(all_tiles: list[Tile], closed: bool) -> tuple[int, str]:
     if has_honors:
         return (3 if closed else 2), "混一色"
     return (6 if closed else 5), "清一色"
+
+
+def _has_ittsu(all_counts: list[int]) -> bool:
+    """123 456 789 material all present within one suit (hand + melds)."""
+    for offset in (0, 9, 18):
+        if all(all_counts[offset + r] >= 1 for r in range(9)):
+            return True
+    return False
+
+
+def _has_sanshoku(all_counts: list[int]) -> bool:
+    """The same run present in all three suits (hand + melds)."""
+    for r in range(7):  # run starting at rank r+1
+        if all(
+            all_counts[offset + r + d] >= 1
+            for offset in (0, 9, 18)
+            for d in range(3)
+        ):
+            return True
+    return False
+
+
+def _has_iipeiko(counts: list[int]) -> bool:
+    """Two identical runs in the concealed hand (closed-only yaku)."""
+    for offset in (0, 9, 18):
+        for r in range(7):
+            if all(counts[offset + r + d] >= 2 for d in range(3)):
+                return True
+    return False
+
+
+def _pinfu_possible(counts: list[int]) -> bool:
+    """Rough pinfu screen: closed, no honors, no triplet material."""
+    if any(counts[t] > 0 for t in HONORS):
+        return False
+    return all(c <= 2 for c in counts)
 
 
 def _is_toitoi_shape(counts: list[int], meld_tiles: list[Tile]) -> bool:

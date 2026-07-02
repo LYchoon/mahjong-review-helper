@@ -100,3 +100,57 @@ def test_meld_yaochuu_kills_tanyao():
     # without meld info the old (over-optimistic) behavior granted tanyao
     _, tags_blind = quick_yaku_han(concealed, melds_count=1, likely_to_riichi=False)
     assert "斷么" in tags_blind
+
+
+def test_ittsu_detected():
+    hand = tiles_from_str("123456789m 55p 46s")
+    han, tags = quick_yaku_han(hand)
+    assert "一通" in tags
+
+
+def test_sanshoku_detected():
+    hand = tiles_from_str("234m 234p 234s 55z 46m")
+    han, tags = quick_yaku_han(hand)
+    assert "三色" in tags
+
+
+def test_iipeiko_closed_only():
+    hand = tiles_from_str("223344m 567p 88s 46p")
+    _, tags_closed = quick_yaku_han(hand)
+    assert "一盃口" in tags_closed
+    concealed = tiles_from_str("223344m 88s 46p")
+    _, tags_open = quick_yaku_han(
+        concealed, melds_count=1, likely_to_riichi=False,
+        meld_tiles=tiles_from_str("567p"),
+    )
+    assert "一盃口" not in tags_open
+
+
+def test_pinfu_fraction_when_no_honors_no_triplets():
+    hand = tiles_from_str("234m 456p 678s 34s 55m 7p")
+    _, tags = quick_yaku_han(hand)
+    assert any("平和可能" in t for t in tags)
+    with_triplet = tiles_from_str("222m 456p 678s 34s 55m 7p")
+    _, tags2 = quick_yaku_han(with_triplet)
+    assert not any("平和可能" in t for t in tags2)
+
+
+def test_uradora_expectation_on_riichi_line():
+    hand = tiles_from_str("234m 456p 678s 34s 55m 7p")
+    _, tags = quick_yaku_han(hand, likely_to_riichi=True)
+    assert any("裏寶" in t for t in tags)
+    _, tags_dama = quick_yaku_han(hand, likely_to_riichi=False)
+    assert not any("裏寶" in t for t in tags_dama)
+
+
+def test_double_wind_worth_two_han():
+    # dealer in East round: an East triplet is round wind + seat wind = 2 han
+    hand = tiles_from_str("111z 234m 567p 88s 46m")
+    han_double, tags = quick_yaku_han(
+        hand, round_wind_tid=27, seat_wind_tid=27, likely_to_riichi=False
+    )
+    assert any("連風" in t for t in tags)
+    han_single, _ = quick_yaku_han(
+        hand, round_wind_tid=27, seat_wind_tid=28, likely_to_riichi=False
+    )
+    assert han_double == han_single + 1
