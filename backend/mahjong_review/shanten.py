@@ -44,6 +44,11 @@ def shanten_chiitoi(counts: list[int]) -> int:
     return _shanten_chiitoi(counts)
 
 
+def shanten_kokushi(counts: list[int]) -> int:
+    """Kokushi-form shanten only."""
+    return _shanten_kokushi(counts)
+
+
 # ---------- chiitoitsu ----------
 
 

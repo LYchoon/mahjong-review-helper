@@ -154,3 +154,125 @@ def test_double_wind_worth_two_han():
         hand, round_wind_tid=27, seat_wind_tid=28, likely_to_riichi=False
     )
     assert han_double == han_single + 1
+
+
+# ---- 2/3-han yaku ----
+
+
+def test_sanshoku_doukou_detected():
+    hand = tiles_from_str("222m 222p 222s 55z 46m")
+    _, tags = quick_yaku_han(hand, likely_to_riichi=False)
+    assert "三色同刻" in tags
+
+
+def test_sanankou_detected():
+    hand = tiles_from_str("111m 333p 777s 45m 88s")
+    _, tags = quick_yaku_han(hand, likely_to_riichi=False)
+    assert "三暗刻" in tags
+
+
+def test_shousangen_detected():
+    hand = tiles_from_str("555z 666z 77z 123m 45p")
+    han, tags = quick_yaku_han(hand, likely_to_riichi=False)
+    assert "小三元" in tags
+    # two dragon triplets still count as yakuhai on top
+    assert sum(1 for t in tags if t.startswith("役牌×3")) == 2
+    assert han >= 4
+
+
+def test_honroutou_detected_and_replaces_chanta():
+    hand = tiles_from_str("111m 999p 111z 99s 22z")
+    _, tags = quick_yaku_han(hand, likely_to_riichi=False)
+    assert "混老頭" in tags
+    assert "混全帶么九" not in tags
+
+
+def test_honroutou_stacks_with_chiitoi():
+    hand = tiles_from_str("11m 99m 11p 99p 11s 99s 1z")
+    _, tags = quick_yaku_han(hand)
+    assert "七對子路線" in tags
+    assert "混老頭" in tags
+
+
+def test_chanta_line_detected():
+    hand = tiles_from_str("123m 789p 111z 99s 12p")
+    _, tags = quick_yaku_han(hand, likely_to_riichi=False)
+    assert "混全帶么九" in tags
+
+
+def test_junchan_replaces_chanta():
+    hand = tiles_from_str("123m 789m 123p 78s 99s")
+    _, tags = quick_yaku_han(hand, likely_to_riichi=False)
+    assert "純全帶么九" in tags
+    assert "混全帶么九" not in tags
+
+
+def test_ryanpeikou_replaces_iipeiko():
+    hand = tiles_from_str("223344m 556677p 9s")
+    _, tags = quick_yaku_han(hand, likely_to_riichi=False)
+    assert "二盃口" in tags
+    assert "一盃口" not in tags
+
+
+# ---- yakuman lines ----
+
+
+def test_daisangen_line_short_circuits():
+    hand = tiles_from_str("555z 666z 777z 123m 4p")
+    han, tags = quick_yaku_han(hand)
+    assert han == 13
+    assert "大三元" in tags
+    assert not any(t.startswith("役牌×3") for t in tags)
+
+
+def test_suuankou_line():
+    hand = tiles_from_str("111m 222p 333s 999m 5p")
+    han, tags = quick_yaku_han(hand)
+    assert han == 13
+    assert "四暗刻線" in tags
+
+
+def test_tsuuiisou_line():
+    hand = tiles_from_str("111z 222z 333z 44z 55z")
+    han, tags = quick_yaku_han(hand)
+    assert han == 13
+    assert "字一色" in tags
+
+
+def test_ryuuiisou_line():
+    hand = tiles_from_str("222s 333s 444s 66z 88s")
+    han, tags = quick_yaku_han(hand)
+    assert han == 13
+    assert "綠一色" in tags
+
+
+def test_chinroutou_line():
+    hand = tiles_from_str("111m 999m 111p 99p 99s")
+    han, tags = quick_yaku_han(hand)
+    assert han == 13
+    assert "清老頭" in tags
+
+
+def test_shousuushii_and_daisuushii():
+    small = tiles_from_str("111z 222z 333z 44z 12m")
+    han_s, tags_s = quick_yaku_han(small)
+    assert han_s == 13
+    assert "小四喜" in tags_s
+    big = tiles_from_str("111z 222z 333z 444z 5m")
+    han_b, tags_b = quick_yaku_han(big)
+    assert han_b == 13
+    assert "大四喜" in tags_b
+
+
+def test_chuuren_line():
+    hand = tiles_from_str("1112345678999m")
+    han, tags = quick_yaku_han(hand)
+    assert han == 13
+    assert "九蓮寶燈線" in tags
+
+
+def test_kokushi_line():
+    hand = tiles_from_str("19m 19p 19s 1234567z")
+    han, tags = quick_yaku_han(hand)
+    assert han == 13
+    assert "國士無雙線" in tags

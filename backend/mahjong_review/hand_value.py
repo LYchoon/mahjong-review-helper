@@ -3,13 +3,20 @@
 Not a full scorer — proper yaku requires knowing wait shape + agari tile + fu.
 We need a *probabilistic* han estimate to plug into EV calculations, so we:
 
-- Add deterministic han for guaranteed yaku (riichi for closed hands, yakuhai
-  triplets, tanyao when no yaochuu, flushes, chiitoitsu-line hands, dora)
+- Add deterministic han for guaranteed yaku (riichi, yakuhai triplets, tanyao,
+  flushes, chiitoi/toitoi lines, run-based yaku, terminal/honor yaku, dora)
+- Short-circuit to 13 han when the hand is on a yakuman line (daisangen,
+  suuankou, kokushi, tsuuiisou, chinroutou, ryuuiisou, suushii, chuuren)
 - Add fractional han for likely-but-uncertain yaku (yakuhai pair → +0.4,
-  tsumo bonus on closed hand → +0.25)
+  tsumo expectation → +0.25, uradora expectation → +0.5, pinfu screen → +0.3)
 - Round up at the end (mahjong han are integers; EV cares about points,
   not ranks, so rounding up gives a slightly optimistic but not unreasonable
   picture)
+
+Out of model (cannot be predicted from a 13-tile hand):
+- moment-of-win yaku: ippatsu (approximated inside the riichi fractionals),
+  haitei/houtei, rinshan, chankan, tenhou/chiihou, double riichi
+- suukantsu (meld structure doesn't retain kan info) and nagashi mangan
 
 A reader can still see the deterministic vs fractional decomposition in the
 returned tag list.
@@ -17,7 +24,7 @@ returned tag list.
 
 from __future__ import annotations
 
-from .shanten import shanten_chiitoi, shanten_standard
+from .shanten import shanten_chiitoi, shanten_kokushi, shanten_standard
 from .tiles import HONORS, Tile, tile_counts
 
 
@@ -40,9 +47,15 @@ def quick_yaku_han(
     counts = tile_counts(hand)
     meld_tiles = meld_tiles or []
     all_tiles = list(hand) + meld_tiles
+    all_counts = tile_counts(all_tiles)
     han_int = 0
     han_frac = 0.0
     tags: list[str] = []
+
+    # yakuman lines trump everything (they don't stack with normal yaku)
+    yakuman_tags = _yakuman_line_tags(counts, all_counts, all_tiles, closed)
+    if yakuman_tags:
+        return 13, yakuman_tags
 
     chiitoi_line = closed and _is_chiitoi_line(counts)
 
@@ -96,18 +109,51 @@ def quick_yaku_han(
         han_int += flush_han
         tags.append(flush_tag)
 
-    # run-based yaku (mutually exclusive with the chiitoi line)
+    # honroutou: everything is a terminal or honor (stacks with chiitoi/toitoi)
+    honroutou = bool(all_tiles) and all(t.is_yaochuu for t in all_tiles)
+    if honroutou:
+        han_int += 2
+        tags.append("混老頭")
+
     if not chiitoi_line:
-        all_counts = tile_counts(all_tiles)
+        # triplet family
+        if _has_sanshoku_doukou(all_counts):
+            han_int += 2
+            tags.append("三色同刻")
+        if sum(1 for c in counts if c >= 3) >= 3:
+            han_int += 2
+            tags.append("三暗刻")
+        dragon_counts = [all_counts[t] for t in (31, 32, 33)]
+        if sum(1 for c in dragon_counts if c >= 3) == 2 and any(
+            c == 2 for c in dragon_counts
+        ):
+            han_int += 2
+            tags.append("小三元")
+
+        # chanta family (honroutou is the stronger reading of the same tiles)
+        if not honroutou and _chanta_line(all_tiles, all_counts):
+            if any(t.suit == "z" for t in all_tiles):
+                han_int += 2 if closed else 1
+                tags.append("混全帶么九")
+            else:
+                han_int += 3 if closed else 2
+                tags.append("純全帶么九")
+
+        # run family
         if _has_ittsu(all_counts):
             han_int += 2 if closed else 1
             tags.append("一通")
         if _has_sanshoku(all_counts):
             han_int += 2 if closed else 1
             tags.append("三色")
-        if closed and _has_iipeiko(counts):
-            han_int += 1
-            tags.append("一盃口")
+        if closed:
+            doubled_runs = _count_doubled_runs(counts)
+            if doubled_runs >= 2:
+                han_int += 3
+                tags.append("二盃口")
+            elif doubled_runs == 1:
+                han_int += 1
+                tags.append("一盃口")
         if closed and _pinfu_possible(counts):
             han_frac += 0.3
             tags.append("+0.3 (平和可能)")
@@ -136,9 +182,92 @@ def quick_yaku_han(
     return rounded, tags
 
 
+_GREEN_TIDS = {19, 20, 21, 23, 25, 32}  # 2s 3s 4s 6s 8s + hatsu
+
+
+def _yakuman_line_tags(
+    counts: list[int],
+    all_counts: list[int],
+    all_tiles: list[Tile],
+    closed: bool,
+) -> list[str]:
+    """Detect yakuman-line hands. Multiple tags may coexist (e.g. 字一色+小四喜)."""
+    if not all_tiles:
+        return []
+    tags: list[str] = []
+
+    if closed:
+        kokushi_sh = shanten_kokushi(counts)
+        if kokushi_sh <= 1 and kokushi_sh < min(
+            shanten_standard(counts, 0), shanten_chiitoi(counts)
+        ):
+            tags.append("國士無雙線")
+        if sum(1 for c in counts if c >= 3) >= 4:
+            tags.append("四暗刻線")
+        for offset in (0, 9, 18):
+            need = (3, 1, 1, 1, 1, 1, 1, 1, 3)
+            if sum(counts[offset + i] for i in range(9)) == sum(counts) and all(
+                counts[offset + i] >= need[i] for i in range(9)
+            ):
+                tags.append("九蓮寶燈線")
+                break
+
+    if all(all_counts[t] >= 3 for t in (31, 32, 33)):
+        tags.append("大三元")
+    if all(t.suit == "z" for t in all_tiles):
+        tags.append("字一色")
+    if all(t.suit != "z" and t.rank in (1, 9) for t in all_tiles):
+        tags.append("清老頭")
+    if all(t.tid in _GREEN_TIDS for t in all_tiles):
+        tags.append("綠一色")
+
+    wind_trips = sum(1 for t in range(27, 31) if all_counts[t] >= 3)
+    wind_pairs = sum(1 for t in range(27, 31) if all_counts[t] == 2)
+    if wind_trips == 4:
+        tags.append("大四喜")
+    elif wind_trips == 3 and wind_pairs >= 1:
+        tags.append("小四喜")
+
+    return tags
+
+
 def _is_chiitoi_line(counts: list[int]) -> bool:
     """True when seven pairs is strictly the closest winning form."""
     return shanten_chiitoi(counts) < shanten_standard(counts, 0)
+
+
+def _chanta_line(all_tiles: list[Tile], all_counts: list[int]) -> bool:
+    """Chanta screen: every tile can sit in a terminal/honor-anchored block and
+    there are enough yaochuu tiles to anchor ~5 blocks. Necessary conditions
+    only — good enough for an estimator."""
+    if not all_tiles:
+        return False
+    if not all(t.suit == "z" or t.rank <= 3 or t.rank >= 7 for t in all_tiles):
+        return False
+    yaochuu_total = sum(all_counts[t] for t in _YAOCHUU_TIDS)
+    return yaochuu_total >= 5
+
+
+_YAOCHUU_TIDS = (0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33)
+
+
+def _has_sanshoku_doukou(all_counts: list[int]) -> bool:
+    """The same rank as triplet material in all three suits."""
+    return any(all(all_counts[off + r] >= 3 for off in (0, 9, 18)) for r in range(9))
+
+
+def _count_doubled_runs(counts: list[int]) -> int:
+    """Distinct doubled runs (iipeiko units) in the concealed hand."""
+    n = 0
+    for offset in (0, 9, 18):
+        r = 0
+        while r < 7:
+            if all(counts[offset + r + d] >= 2 for d in range(3)):
+                n += 1
+                r += 3  # consume the run so overlaps aren't double counted
+            else:
+                r += 1
+    return n
 
 
 def _flush_value(all_tiles: list[Tile], closed: bool) -> tuple[int, str]:
@@ -169,15 +298,6 @@ def _has_sanshoku(all_counts: list[int]) -> bool:
             for d in range(3)
         ):
             return True
-    return False
-
-
-def _has_iipeiko(counts: list[int]) -> bool:
-    """Two identical runs in the concealed hand (closed-only yaku)."""
-    for offset in (0, 9, 18):
-        for r in range(7):
-            if all(counts[offset + r + d] >= 2 for d in range(3)):
-                return True
     return False
 
 
